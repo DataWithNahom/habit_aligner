@@ -186,14 +186,6 @@ class _MainScreenState extends State<MainScreen> {
                           label: 'Streak',
                           value: '${metrics.streak}d',
                         ),
-                        MetricCard(
-                          label: 'Points',
-                          value: '${controller.points}',
-                        ),
-                        MetricCard(
-                          label: 'Level',
-                          value: '${controller.level}',
-                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -208,11 +200,6 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                     if (controller.weeklyReport != null)
                       _WeeklyChart(report: controller.weeklyReport!),
-                    if (controller.badges.isNotEmpty)
-                      InsightCard(
-                        message:
-                            'Badges unlocked: ${controller.badges.join(', ')}',
-                      ),
 
                     const SizedBox(height: 20),
                     const Text(

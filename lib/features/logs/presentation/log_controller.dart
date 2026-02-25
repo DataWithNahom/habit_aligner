@@ -6,7 +6,6 @@ import '../../intelligence/domain/models/plan_block.dart';
 import '../../intelligence/domain/models/weekly_report.dart';
 import '../../intelligence/domain/services/adaptive_plan_builder.dart';
 import '../../intelligence/domain/services/coach_engine.dart';
-import '../../intelligence/domain/services/gamification_engine.dart';
 import '../../intelligence/domain/services/weekly_report_builder.dart';
 import '../data/isar_log_repository.dart';
 import '../domain/log_entry.dart';
@@ -66,8 +65,6 @@ class LogController extends ChangeNotifier {
   final _coachEngine = CoachEngine();
   final _planBuilder = AdaptivePlanBuilder();
   final _weeklyBuilder = WeeklyReportBuilder();
-  final _gamification = GamificationEngine();
-
   bool _isLoading = true;
   bool get isLoading => _isLoading;
 
@@ -79,13 +76,6 @@ class LogController extends ChangeNotifier {
   List<PlanBlock> get dailyPlan => _dailyPlan;
   WeeklyReport? _weeklyReport;
   WeeklyReport? get weeklyReport => _weeklyReport;
-  int _points = 0;
-  int get points => _points;
-  int _level = 1;
-  int get level => _level;
-  List<String> _badges = const [];
-  List<String> get badges => _badges;
-
   List<LogEntry> get resumablePausedLogs => List.unmodifiable(
     _logs.where((entry) => entry.status == LogStatus.paused).toList()
       ..sort((a, b) => b.startedAt.compareTo(a.startedAt)),
@@ -267,17 +257,6 @@ class LogController extends ChangeNotifier {
     final report = _weeklyBuilder.build(_logs, today, todayMetrics.focusScore);
     _weeklyReport = report;
     await _repository.saveWeeklyReport(report);
-
-    final game = _gamification.compute(_logs);
-    _points = game.points;
-    _level = game.level;
-    _badges = game.badges;
-    await _repository.saveGamification(
-      points: _points,
-      level: _level,
-      streak: todayMetrics.streak,
-      badges: _badges,
-    );
 
     final key = '${today.year}-${today.month}-${today.day}';
     await _repository.saveAnalyticsSnapshot(
