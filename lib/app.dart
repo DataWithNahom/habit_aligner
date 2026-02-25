@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'core/design/app_design_system.dart';
 import 'core/logging/app_observers.dart';
 import 'core/logging/logger_service.dart';
 import 'features/logs/data/isar_log_repository.dart';
@@ -32,44 +33,16 @@ class _HabitAlignerAppState extends State<HabitAlignerApp> {
   @override
   void dispose() {
     _lifecycleObserver.detach();
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.lifecycle,
-      event: 'AppWidgetDisposed',
-      message: 'HabitAlignerApp state disposed.',
-    );
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    const background = Color(0xFF0C0F14);
-    const surface = Color(0xFF121722);
-    const accent = Color(0xFF8EA3BD);
-    const divider = Color(0xFF2C3445);
-
-    LoggerService.instance.log(
-      level: LogLevel.debug,
-      tag: FeatureTag.ui,
-      event: 'AppBuild',
-      message: 'HabitAlignerApp build invoked.',
-    );
-
     return MaterialApp(
       title: 'Behavioral OS',
       debugShowCheckedModeBanner: false,
       navigatorObservers: [_navigatorObserver],
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: background,
-        colorScheme: const ColorScheme.dark(
-          surface: surface,
-          primary: accent,
-          secondary: accent,
-          outline: divider,
-        ),
-      ),
+      theme: buildAppTheme(),
       home: MainScreen(
         controller: LogController(repository: IsarLogRepository()),
       ),

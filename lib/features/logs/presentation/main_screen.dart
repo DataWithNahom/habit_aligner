@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../../../core/logging/logger_service.dart';
+import '../../../core/widgets/dashboard_cards.dart';
+import '../../intelligence/domain/models/plan_block.dart';
+import '../../intelligence/domain/models/weekly_report.dart';
 import '../domain/log_entry.dart';
 import 'log_controller.dart';
 
@@ -14,165 +17,22 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  bool _handlingDialog = false;
-  bool _isResolvingTransition = false;
-  String? _transitionValidationError;
-
   @override
   void initState() {
     super.initState();
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.lifecycle,
-      event: 'MainScreenInitState',
-      message: 'MainScreen initialized and controller listener attached.',
-    );
-    widget.controller.addListener(_onStateChanged);
+    widget.controller.addListener(_onChanged);
     widget.controller.initialize();
   }
 
   @override
   void dispose() {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.lifecycle,
-      event: 'MainScreenDispose',
-      message: 'MainScreen disposed and controller listener removed.',
-    );
-    widget.controller.removeListener(_onStateChanged);
+    widget.controller.removeListener(_onChanged);
     widget.controller.dispose();
     super.dispose();
   }
 
-  void _onStateChanged() {
-    if (!mounted) return;
-    setState(() {});
-
-    if (!_handlingDialog && widget.controller.halfTimeAlertDue) {
-      LoggerService.instance.log(
-        level: LogLevel.info,
-        tag: FeatureTag.notification,
-        event: 'HalfTimeDialogQueued',
-        message: 'Half-time alert dialog queued for display.',
-      );
-      _handlingDialog = true;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _showHalfTimeDialog(),
-      );
-      return;
-    }
-
-    if (!_handlingDialog && widget.controller.plannedDurationAlertDue) {
-      LoggerService.instance.log(
-        level: LogLevel.info,
-        tag: FeatureTag.notification,
-        event: 'PlannedDurationDialogQueued',
-        message: 'Planned-duration alert dialog queued for display.',
-      );
-      _handlingDialog = true;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _showPlannedDurationDialog(),
-      );
-    }
-  }
-
-  Future<void> _showHalfTimeDialog() async {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.notification,
-      event: 'HalfTimeDialogShown',
-      message: 'Half-time alert dialog shown.',
-    );
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Half-time checkpoint'),
-          content: const Text('Continue current action or transition.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                LoggerService.instance.log(
-                  level: LogLevel.info,
-                  tag: FeatureTag.userAction,
-                  event: 'HalfTimeDialogContinueTapped',
-                  message: 'User selected continue from half-time dialog.',
-                );
-                widget.controller.dismissHalfTimeAlert();
-                Navigator.of(context).pop();
-              },
-              child: const Text('Continue'),
-            ),
-            FilledButton(
-              onPressed: () {
-                LoggerService.instance.log(
-                  level: LogLevel.info,
-                  tag: FeatureTag.userAction,
-                  event: 'HalfTimeDialogTransitionTapped',
-                  message: 'User selected transition from half-time dialog.',
-                );
-                widget.controller.dismissHalfTimeAlert();
-                Navigator.of(context).pop();
-                _openTransitionFlow();
-              },
-              child: const Text('Transition'),
-            ),
-          ],
-        );
-      },
-    );
-    _handlingDialog = false;
-  }
-
-  Future<void> _showPlannedDurationDialog() async {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.notification,
-      event: 'PlannedDurationDialogShown',
-      message: 'Planned-duration alert dialog shown.',
-    );
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Planned duration reached'),
-          content: const Text('Are you still working on this action?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                LoggerService.instance.log(
-                  level: LogLevel.info,
-                  tag: FeatureTag.userAction,
-                  event: 'PlannedDialogContinueTapped',
-                  message:
-                      'User selected continue current from planned-duration dialog.',
-                );
-                widget.controller.dismissPlannedDurationAlert();
-                Navigator.of(context).pop();
-              },
-              child: const Text('Continue current'),
-            ),
-            FilledButton(
-              onPressed: () {
-                LoggerService.instance.log(
-                  level: LogLevel.info,
-                  tag: FeatureTag.userAction,
-                  event: 'PlannedDialogTransitionTapped',
-                  message:
-                      'User selected transition now from planned-duration dialog.',
-                );
-                widget.controller.dismissPlannedDurationAlert();
-                Navigator.of(context).pop();
-                _openTransitionFlow();
-              },
-              child: const Text('Transition now'),
-            ),
-          ],
-        );
-      },
-    );
-    _handlingDialog = false;
+  void _onChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -185,767 +45,389 @@ class _MainScreenState extends State<MainScreen> {
       body: controller.isLoading
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _ActivePanel(
-                        controller: controller,
-                        onResumePaused: (id) async {
-                          await controller.resumePausedLog(id);
-                        },
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Now',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: controller.activeLog == null
-                            ? () {
-                                LoggerService.instance.log(
-                                  level: LogLevel.info,
-                                  tag: FeatureTag.userAction,
-                                  event: 'PrimaryStartButtonTapped',
-                                  message:
-                                      'User tapped start intentional action button.',
-                                );
-                                _openStartSheet();
-                              }
-                            : () {
-                                LoggerService.instance.log(
-                                  level: LogLevel.info,
-                                  tag: FeatureTag.userAction,
-                                  event: 'PrimaryTransitionButtonTapped',
-                                  message:
-                                      'User tapped resolve and transition button.',
-                                );
-                                _openTransitionFlow();
-                              },
-                        icon: const Icon(Icons.track_changes_rounded, size: 18),
-                        label: Text(
-                          controller.activeLog == null
-                              ? 'Start intentional action'
-                              : 'Resolve and transition',
-                        ),
+                    ),
+                    const SizedBox(height: 8),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 260),
+                      child: SessionStateCard(
+                        key: ValueKey(controller.activeLog?.id ?? 'idle'),
+                        title:
+                            controller.activeLog?.label ?? 'No active session',
+                        subtitle: controller.activeLog == null
+                            ? 'Start an intentional block to begin.'
+                            : 'Elapsed ${controller.activeElapsed.inMinutes} min',
+                        trailing: controller.activeLog != null
+                            ? IconButton(
+                                tooltip: 'Complete current session',
+                                onPressed: () async {
+                                  HapticFeedback.mediumImpact();
+                                  await controller.completeActiveLog();
+                                },
+                                icon: const Icon(Icons.check_circle_outline),
+                              )
+                            : null,
                       ),
-                      const SizedBox(height: 16),
-                      _MetricsPanel(metrics: metrics),
-                      const SizedBox(height: 16),
-                      const _SectionHeader(
-                        title: 'Daily timeline',
-                        subtitle:
-                            'Chronological reconstruction of resolved states.',
-                      ),
-                      const SizedBox(height: 8),
-                      if (controller.todayTimeline.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          child: Center(
-                            child: Text('No timeline records for today.'),
-                          ),
-                        )
-                      else
-                        ListView.separated(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: controller.todayTimeline.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final log = controller.todayTimeline[index];
-                            return _TimelineTile(log: log);
-                          },
-                        ),
+                    ),
+                    const SizedBox(height: 12),
+                    _QuickActions(controller: controller),
 
-                      const SizedBox(height: 16),
-                      const _SectionHeader(
-                        title: 'Drift pattern insights',
-                        subtitle:
-                            'Behavioral interruption patterns and fatigue signatures.',
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Plan',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
-                      const SizedBox(height: 8),
-                      ...controller.driftInsights.map(
-                        (i) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Text('• $i'),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 8,
+                    ),
+                    const SizedBox(height: 8),
+                    CTASection(
+                      title: 'Adaptive plan builder',
+                      subtitle:
+                          'Generated from your offline historical performance.',
+                      child: Column(
                         children: [
-                          OutlinedButton(
-                            onPressed: () {
-                              LoggerService.instance.log(
-                                level: LogLevel.info,
-                                tag: FeatureTag.userAction,
-                                event: 'ExportJsonTapped',
-                                message: 'User requested JSON export.',
-                              );
-                              controller.exportJson();
-                            },
-                            child: const Text('Export JSON'),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: () => controller.createDailyPlan(),
+                              icon: const Icon(Icons.auto_awesome),
+                              label: const Text('Regenerate plan'),
+                            ),
                           ),
-                          OutlinedButton(
-                            onPressed: () {
-                              LoggerService.instance.log(
-                                level: LogLevel.info,
-                                tag: FeatureTag.userAction,
-                                event: 'ExportCsvTapped',
-                                message: 'User requested CSV export.',
-                              );
-                              controller.exportCsv();
-                            },
-                            child: const Text('Export CSV'),
+                          ...controller.dailyPlan.map(
+                            (block) => _PlanTile(block: block),
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 12),
+                    _TemplateRow(controller: controller),
+
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Insights',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        MetricCard(
+                          label: 'Focus',
+                          value: '${metrics.focusScore}',
+                        ),
+                        MetricCard(
+                          label: 'Streak',
+                          value: '${metrics.streak}d',
+                        ),
+                        MetricCard(
+                          label: 'Points',
+                          value: '${controller.points}',
+                        ),
+                        MetricCard(
+                          label: 'Level',
+                          value: '${controller.level}',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...controller.coachRecommendations.map(
+                      (e) => Semantics(
+                        label: 'Coach recommendation',
+                        child: InsightCard(message: '${e.title}: ${e.body}'),
+                      ),
+                    ),
+                    ...controller.driftInsights.map(
+                      (e) => InsightCard(message: e),
+                    ),
+                    if (controller.weeklyReport != null)
+                      _WeeklyChart(report: controller.weeklyReport!),
+                    if (controller.badges.isNotEmpty)
+                      InsightCard(
+                        message:
+                            'Badges unlocked: ${controller.badges.join(', ')}',
+                      ),
+
+                    const SizedBox(height: 20),
+                    const Text(
+                      'History',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...controller.todayTimeline.map(
+                      (log) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(log.label),
+                        subtitle: Text(
+                          '${log.kind.name} • ${log.status.name}${log.tags.isNotEmpty ? ' • ${log.tags.join('/')}' : ''}',
+                        ),
+                      ),
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton(
+                          onPressed: controller.exportJson,
+                          child: const Text('Export JSON'),
+                        ),
+                        OutlinedButton(
+                          onPressed: controller.exportCsv,
+                          child: const Text('Export CSV'),
+                        ),
+                        OutlinedButton(
+                          onPressed: controller.createBackup,
+                          child: const Text('Create backup'),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openStartSheet,
+        label: const Text('Start'),
+        icon: const Icon(Icons.play_arrow),
+      ),
     );
   }
 
   Future<void> _openStartSheet({
-    String? parentId,
-    TransitionCategory? transitionCategory,
+    String? presetLabel,
+    int presetMins = 30,
   }) async {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.ui,
-      event: 'OpenStartSheet',
-      message: 'Opening start-session bottom sheet.',
-      context: {
-        'parentId': parentId,
-        'transitionCategory': transitionCategory?.name,
-      },
-    );
-    final labelController = TextEditingController();
-    final expectedController = TextEditingController(text: '30');
-    BehaviorKind selectedKind = BehaviorKind.intentionalAction;
+    final labelController = TextEditingController(text: presetLabel ?? '');
+    final expectedController = TextEditingController(text: '$presetMins');
+    final tagsController = TextEditingController();
+    final experimentController = TextEditingController();
+    var selectedKind = BehaviorKind.intentionalAction;
+    var advanced = false;
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setStateModal) {
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                16,
-                16,
-                MediaQuery.viewInsetsOf(context).bottom + 16,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModal) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            MediaQuery.viewInsetsOf(context).bottom + 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: labelController,
+                decoration: const InputDecoration(labelText: 'Action label'),
+                autofocus: true,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Define behavior state',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: labelController,
-                    decoration: const InputDecoration(
-                      labelText: 'Action label',
-                    ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: expectedController,
-                    decoration: const InputDecoration(
-                      labelText: 'Expected duration (minutes)',
-                    ),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<BehaviorKind>(
-                    initialValue: selectedKind,
-                    isExpanded: true,
-                    items: BehaviorKind.values
-                        .map(
-                          (kind) => DropdownMenuItem(
-                            value: kind,
-                            child: Text(_kindLabel(kind)),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      LoggerService.instance.log(
-                        level: LogLevel.info,
-                        tag: FeatureTag.userAction,
-                        event: 'BehaviorKindChanged',
-                        message: 'User changed behavior kind selector.',
-                        context: {'selectedKind': value.name},
-                      );
-                      setStateModal(() => selectedKind = value);
-                    },
-                    decoration: const InputDecoration(
-                      labelText: 'Behavior state',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: () async {
-                      final label = labelController.text.trim();
-                      final expected =
-                          int.tryParse(expectedController.text) ?? 0;
-                      LoggerService.instance.log(
-                        level: LogLevel.info,
-                        tag: FeatureTag.userAction,
-                        event: 'StartSheetSubmitTapped',
-                        message: 'User tapped start button in start sheet.',
-                        context: {
-                          'label': label,
-                          'expectedDurationMinutes': expected,
-                          'kind': selectedKind.name,
-                        },
-                      );
-                      if (label.isEmpty || expected <= 0) return;
-
-                      await widget.controller.startLog(
-                        label: label,
-                        kind: selectedKind,
-                        expectedDurationMinutes: expected,
-                        parentId: parentId,
-                        transitionCategory: transitionCategory,
-                      );
-
-                      if (context.mounted) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                    child: const Text('Start'),
-                  ),
-                ],
+              TextField(
+                controller: expectedController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Minutes'),
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _openTransitionFlow() async {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.ui,
-      event: 'OpenTransitionFlow',
-      message: 'Opening transition flow dialog.',
-      context: {'hasActive': widget.controller.activeLog != null},
-    );
-    final active = widget.controller.activeLog;
-    if (active == null) {
-      await _openStartSheet();
-      return;
-    }
-
-    TransitionCategory selectedCategory = TransitionCategory.importantNotUrgent;
-    String resolution = 'pause';
-    _isResolvingTransition = false;
-    _transitionValidationError = null;
-    final abandonReasonController = TextEditingController();
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Transition classification required'),
-              content: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Current action: ${active.label}'),
-                    const SizedBox(height: 12),
-                    const Text('Resolve current action before switching:'),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(
-                          value: 'complete',
-                          label: Text('Completed'),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'pause',
-                          label: Text('Paused'),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'abandon',
-                          label: Text('Abandoned'),
-                        ),
-                      ],
-                      selected: {resolution},
-                      onSelectionChanged: (selection) {
-                        LoggerService.instance.log(
-                          level: LogLevel.info,
-                          tag: FeatureTag.userAction,
-                          event: 'TransitionResolutionChanged',
-                          message:
-                              'User changed transition resolution selection.',
-                          context: {'resolution': selection.first},
-                        );
-                        setDialogState(() {
-                          resolution = selection.first;
-                          _transitionValidationError = null;
-                        });
-                      },
-                    ),
-                    if (resolution == 'abandon')
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: TextField(
-                          controller: abandonReasonController,
-                          decoration: const InputDecoration(
-                            labelText: 'Abandonment reason',
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<TransitionCategory>(
-                      initialValue: selectedCategory,
-                      isExpanded: true,
-                      items: TransitionCategory.values
-                          .map(
-                            (category) => DropdownMenuItem(
-                              value: category,
-                              child: Text(_transitionLabel(category)),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        LoggerService.instance.log(
-                          level: LogLevel.info,
-                          tag: FeatureTag.userAction,
-                          event: 'TransitionCategoryChanged',
-                          message: 'User changed transition category.',
-                          context: {'category': value.name},
-                        );
-                        setDialogState(() => selectedCategory = value);
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Reason for switching',
-                      ),
-                    ),
-                    if (_transitionValidationError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          _transitionValidationError!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ),
-                  ],
+              DropdownButtonFormField<BehaviorKind>(
+                initialValue: selectedKind,
+                items: BehaviorKind.values
+                    .map((e) => DropdownMenuItem(value: e, child: Text(e.name)))
+                    .toList(),
+                onChanged: (v) => setModal(
+                  () => selectedKind = v ?? BehaviorKind.intentionalAction,
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: _isResolvingTransition
-                      ? null
-                      : () {
-                          LoggerService.instance.log(
-                            level: LogLevel.info,
-                            tag: FeatureTag.userAction,
-                            event: 'TransitionDialogCancelTapped',
-                            message: 'User canceled transition dialog.',
-                          );
-                          Navigator.of(context).pop();
-                        },
-                  child: const Text('Cancel'),
+              SwitchListTile(
+                value: advanced,
+                onChanged: (v) => setModal(() => advanced = v),
+                title: const Text('Advanced options (tags + experiment)'),
+              ),
+              if (advanced) ...[
+                TextField(
+                  controller: tagsController,
+                  decoration: const InputDecoration(
+                    labelText: 'Context tags (comma separated)',
+                  ),
                 ),
-                FilledButton(
-                  onPressed: _isResolvingTransition
-                      ? null
-                      : () async {
-                          LoggerService.instance.log(
-                            level: LogLevel.info,
-                            tag: FeatureTag.userAction,
-                            event: 'TransitionResolveTapped',
-                            message: 'User confirmed transition resolution.',
-                            context: {
-                              'resolution': resolution,
-                              'category': selectedCategory.name,
-                            },
-                          );
-                          if (resolution == 'abandon') {
-                            final reason = abandonReasonController.text.trim();
-                            if (reason.isEmpty) {
-                              setDialogState(() {
-                                _transitionValidationError =
-                                    'Abandonment reason is required.';
-                              });
-                              return;
-                            }
-                          }
-
-                          setDialogState(() {
-                            _isResolvingTransition = true;
-                            _transitionValidationError = null;
-                          });
-
-                          try {
-                            if (resolution == 'complete') {
-                              await widget.controller.completeActiveLog();
-                            } else if (resolution == 'pause') {
-                              await widget.controller.pauseActiveLog();
-                            } else {
-                              final reason = abandonReasonController.text
-                                  .trim();
-                              await widget.controller.abandonActiveLog(reason);
-                            }
-
-                            if (context.mounted) {
-                              Navigator.of(context).pop();
-                            }
-
-                            await _openStartSheet(
-                              parentId: active.id,
-                              transitionCategory: selectedCategory,
-                            );
-                          } finally {
-                            if (mounted) {
-                              setState(() {
-                                _isResolvingTransition = false;
-                              });
-                            }
-                          }
-                        },
-                  child: Text(
-                    _isResolvingTransition
-                        ? 'Resolving...'
-                        : 'Resolve and continue',
+                TextField(
+                  controller: experimentController,
+                  decoration: const InputDecoration(
+                    labelText: 'Experiment ID (optional)',
                   ),
                 ),
               ],
-            );
-          },
-        );
-      },
+              const SizedBox(height: 8),
+              FilledButton(
+                onPressed: () async {
+                  final label = labelController.text.trim();
+                  final expected = int.tryParse(expectedController.text) ?? 30;
+                  if (label.isEmpty || expected <= 0) return;
+                  HapticFeedback.lightImpact();
+                  await widget.controller.startLog(
+                    label: label,
+                    kind: selectedKind,
+                    expectedDurationMinutes: expected,
+                    tags: tagsController.text
+                        .split(',')
+                        .map((e) => e.trim())
+                        .where((e) => e.isNotEmpty)
+                        .toList(),
+                    experimentId: experimentController.text.trim().isEmpty
+                        ? null
+                        : experimentController.text.trim(),
+                  );
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: const Text('Start'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.subtitle});
+class _QuickActions extends StatelessWidget {
+  const _QuickActions({required this.controller});
 
-  final String title;
-  final String subtitle;
+  final LogController controller;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 2),
-        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+        FilledButton.icon(
+          onPressed: controller.activeLog == null
+              ? null
+              : controller.pauseActiveLog,
+          icon: const Icon(Icons.pause),
+          label: const Text('Pause'),
+        ),
+        FilledButton.icon(
+          onPressed: controller.activeLog == null
+              ? null
+              : controller.completeActiveLog,
+          icon: const Icon(Icons.check),
+          label: const Text('Complete'),
+        ),
+        OutlinedButton.icon(
+          onPressed: controller.activeLog == null
+              ? null
+              : () => controller.abandonActiveLog('manual abandon'),
+          icon: const Icon(Icons.close),
+          label: const Text('Abandon'),
+        ),
       ],
     );
   }
 }
 
-class _ActivePanel extends StatelessWidget {
-  const _ActivePanel({required this.controller, required this.onResumePaused});
+class _TemplateRow extends StatelessWidget {
+  const _TemplateRow({required this.controller});
 
   final LogController controller;
-  final Future<void> Function(String pausedSessionId) onResumePaused;
 
   @override
   Widget build(BuildContext context) {
-    final active = controller.activeLog;
-
-    if (active == null) {
-      final pausedLogs = controller.resumablePausedLogs.take(3).toList();
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'State: Unassigned',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 4),
-              const Text('Define the next intentional action to assign time.'),
-              if (pausedLogs.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Resume paused tasks',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-                const SizedBox(height: 8),
-                ...pausedLogs.map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${entry.label} • expected ${entry.expectedDurationMinutes}m',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () => onResumePaused(entry.id),
-                          child: const Text('Resume'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'State: ${_kindLabel(active.kind)}',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            const SizedBox(height: 6),
-            Text(active.label, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _InfoChip(label: 'Started ${_formatDate(active.startedAt)}'),
-                _InfoChip(
-                  label: 'Expected ${active.expectedDurationMinutes} min',
-                ),
-                _InfoChip(
-                  label: 'Elapsed ${_formatDuration(controller.activeElapsed)}',
-                ),
-                if (active.parentId != null)
-                  _InfoChip(label: 'Lineage ${active.parentId}'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: Theme.of(
-          context,
-        ).colorScheme.surfaceContainerHighest.withAlpha(64),
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
-      ),
-      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
-    );
-  }
-}
-
-class _MetricsPanel extends StatelessWidget {
-  const _MetricsPanel({required this.metrics});
-
-  final DailyMetrics metrics;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _SectionHeader(
-              title: 'Daily analytics',
-              subtitle: 'Derived structural measures for today.',
-            ),
-            const SizedBox(height: 10),
-            _MetricRow(
-              label: 'Planned vs actual accuracy',
-              value:
-                  '${(metrics.plannedVsActualAccuracy * 100).toStringAsFixed(1)}%',
-            ),
-            _MetricRow(
-              label: 'Deviation frequency',
-              value:
-                  '${(metrics.deviationFrequency * 100).toStringAsFixed(1)}%',
-            ),
-            _MetricRow(
-              label: 'Drift duration',
-              value: _formatDuration(metrics.driftDuration),
-            ),
-            _MetricRow(
-              label: 'Reaction ratio',
-              value: '${(metrics.reactionRatio * 100).toStringAsFixed(1)}%',
-            ),
-            _MetricRow(
-              label: 'Interruption density',
-              value:
-                  '${(metrics.interruptionDensity * 100).toStringAsFixed(1)}%',
-            ),
-            _MetricRow(
-              label: 'Daily focus score',
-              value: '${metrics.focusScore}/100',
-            ),
-            _MetricRow(
-              label: 'Current streak',
-              value: '${metrics.streak} day(s)',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
+    final templates = [
+      ('Deep Work 45', 45),
+      ('Admin Sweep 20', 20),
+      ('Recovery Break 10', 10),
+    ];
+    return CTASection(
+      title: 'Session templates',
+      subtitle: 'One-thumb quick start templates.',
+      child: Wrap(
+        spacing: 8,
         children: [
-          Expanded(child: Text(label)),
-          Text(value, style: Theme.of(context).textTheme.labelLarge),
+          for (final t in templates)
+            ActionChip(
+              label: Text(t.$1),
+              onPressed: () =>
+                  (context.findAncestorStateOfType<_MainScreenState>())
+                      ?._openStartSheet(presetLabel: t.$1, presetMins: t.$2),
+            ),
         ],
       ),
     );
   }
 }
 
-class _TimelineTile extends StatelessWidget {
-  const _TimelineTile({required this.log});
+class _PlanTile extends StatelessWidget {
+  const _PlanTile({required this.block});
 
-  final LogEntry log;
+  final PlanBlock block;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.schedule),
+      title: Text(block.label),
+      subtitle: Text(
+        '${block.startHour.toString().padLeft(2, '0')}:${block.startMinute.toString().padLeft(2, '0')} • ${block.durationMinutes} min',
+      ),
+    );
+  }
+}
+
+class _WeeklyChart extends StatelessWidget {
+  const _WeeklyChart({required this.report});
+
+  final WeeklyReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final points = report.chartPoints;
+    final max = points.isEmpty
+        ? 1
+        : points.reduce((a, b) => a > b ? a : b).clamp(1, 999);
+
+    return CTASection(
+      title: 'Weekly intelligence',
+      subtitle: report.summary,
+      child: SizedBox(
+        height: 80,
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Container(
-              width: 8,
-              height: 8,
-              margin: const EdgeInsets.only(top: 6),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _statusColor(context, log.status),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    log.label,
-                    style: Theme.of(context).textTheme.labelLarge,
+            for (final p in points)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 400),
+                    height: (p / max) * 72,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${_formatDate(log.startedAt)} - ${log.endedAt == null ? 'Active' : _formatDate(log.endedAt!)} • ${_kindLabel(log.kind)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              _statusLabel(log.status),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
           ],
         ),
       ),
     );
   }
-
-  Color _statusColor(BuildContext context, LogStatus status) {
-    return switch (status) {
-      LogStatus.active => Theme.of(context).colorScheme.primary,
-      LogStatus.paused => Colors.amber,
-      LogStatus.completed => Colors.greenAccent,
-      LogStatus.abandoned => Colors.redAccent,
-    };
-  }
-}
-
-String _kindLabel(BehaviorKind kind) {
-  return switch (kind) {
-    BehaviorKind.intentionalAction => 'Intentional action',
-    BehaviorKind.correctiveStop => 'Corrective stop',
-    BehaviorKind.intentionalBreak => 'Intentional break',
-    BehaviorKind.drift => 'Drift awareness',
-  };
-}
-
-String _transitionLabel(TransitionCategory category) {
-  return switch (category) {
-    TransitionCategory.urgentImportant => 'Urgent & important',
-    TransitionCategory.importantNotUrgent => 'Important, not urgent',
-    TransitionCategory.urgentNotImportant => 'Urgent, not important',
-    TransitionCategory.neither => 'Neither urgent nor important',
-  };
-}
-
-String _statusLabel(LogStatus status) {
-  return switch (status) {
-    LogStatus.active => 'Active',
-    LogStatus.paused => 'Paused',
-    LogStatus.completed => 'Completed',
-    LogStatus.abandoned => 'Abandoned',
-  };
-}
-
-String _formatDate(DateTime dateTime) {
-  final twoDigitHour = dateTime.hour.toString().padLeft(2, '0');
-  final twoDigitMinute = dateTime.minute.toString().padLeft(2, '0');
-  return '$twoDigitHour:$twoDigitMinute';
-}
-
-String _formatDuration(Duration duration) {
-  final hours = duration.inHours.toString().padLeft(2, '0');
-  final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
-  final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
-  return '$hours:$minutes:$seconds';
 }

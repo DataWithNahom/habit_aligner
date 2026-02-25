@@ -5,7 +5,9 @@ import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../core/logging/logger_service.dart';
+import '../../intelligence/domain/models/coach_recommendation.dart';
+import '../../intelligence/domain/models/plan_block.dart';
+import '../../intelligence/domain/models/weekly_report.dart';
 import '../domain/log_entry.dart';
 import '../domain/services/invariant_repair_engine.dart';
 import 'isar_models.dart';
@@ -20,7 +22,7 @@ class RepairEvent {
 class IsarLogRepository implements LogRepository {
   IsarLogRepository({this.now = _defaultNow});
 
-  static const int currentSchemaVersion = 2;
+  static const int currentSchemaVersion = 3;
   static const String _legacyStorageKey = 'behavior_logs';
   static const String _exportSchemaVersionKey = 'schemaVersion';
 
@@ -33,419 +35,381 @@ class IsarLogRepository implements LogRepository {
   List<RepairEvent> get repairEvents => List.unmodifiable(_repairEvents);
 
   Future<void> initialize() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'RepositoryInitialize',
-      tag: FeatureTag.database,
-      operation: () async {
-        if (_isar != null && _isar!.isOpen) {
-          LoggerService.instance.log(
-            level: LogLevel.debug,
-            tag: FeatureTag.database,
-            event: 'DatabaseOpenSkipped',
-            message: 'Database already open, skipping re-open.',
-          );
-          return;
-        }
-        final dir = await getApplicationDocumentsDirectory();
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'DatabaseOpenAttempt',
-          message: 'Opening Isar database.',
-          context: {'directory': dir.path, 'name': 'behavior_os'},
-        );
-        _isar = await Isar.open(
-          [SessionEntitySchema, AppMetaEntitySchema],
-          directory: dir.path,
-          name: 'behavior_os',
-          inspector: false,
-        );
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'DatabaseOpenSuccess',
-          message: 'Isar database opened successfully.',
-        );
-
-        await _runMigrations();
-        await _runInvariantRepair();
-      },
+    if (_isar != null && _isar!.isOpen) return;
+    final dir = await getApplicationDocumentsDirectory();
+    _isar = await Isar.open(
+      [
+        SessionEntitySchema,
+        AppMetaEntitySchema,
+        DailyAnalyticsEntitySchema,
+        CoachRecommendationEntitySchema,
+        PlanBlockEntitySchema,
+        WeeklyReportEntitySchema,
+        GamificationProfileEntitySchema,
+        ExperimentEntitySchema,
+        BackupSnapshotEntitySchema,
+      ],
+      directory: dir.path,
+      name: 'behavior_os',
+      inspector: false,
     );
+    await _runMigrations();
+    await _runInvariantRepair();
   }
 
   Future<void> _runMigrations() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'RunMigrations',
-      tag: FeatureTag.database,
-      operation: () async {
-        final isar = _isar!;
-        var meta = await isar.appMetaEntitys.get(1);
-        meta ??= AppMetaEntity()
+    final isar = _isar!;
+    var meta = await isar.appMetaEntitys.get(1);
+    meta ??= AppMetaEntity()
+      ..id = 1
+      ..schemaVersion = 1
+      ..sharedPrefsImported = false;
+
+    if (!meta.sharedPrefsImported) {
+      final prefs = await SharedPreferences.getInstance();
+      final rawLogs = prefs.getStringList(_legacyStorageKey) ?? <String>[];
+      final migrated = <LogEntry>[];
+      for (final raw in rawLogs) {
+        try {
+          migrated.add(LogEntry.fromJson(raw));
+        } catch (_) {}
+      }
+      if (migrated.isNotEmpty) {
+        await upsertLogs(migrated);
+      }
+      meta.sharedPrefsImported = true;
+      await prefs.remove(_legacyStorageKey);
+    }
+
+    if (meta.schemaVersion < currentSchemaVersion) {
+      meta.schemaVersion = currentSchemaVersion;
+    }
+
+    await isar.writeTxn(() async {
+      await isar.appMetaEntitys.put(meta!);
+      final profile = await isar.gamificationProfileEntitys.get(1);
+      if (profile == null) {
+        final created = GamificationProfileEntity()
           ..id = 1
-          ..schemaVersion = 1
-          ..sharedPrefsImported = false;
-
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'MigrationMetaLoaded',
-          message: 'Loaded migration metadata.',
-          context: {
-            'schemaVersion': meta.schemaVersion,
-            'sharedPrefsImported': meta.sharedPrefsImported,
-          },
-        );
-
-        if (!meta.sharedPrefsImported) {
-          final prefs = await SharedPreferences.getInstance();
-          final rawLogs = prefs.getStringList(_legacyStorageKey) ?? <String>[];
-          final migrated = <LogEntry>[];
-          for (final raw in rawLogs) {
-            try {
-              migrated.add(LogEntry.fromJson(raw));
-            } catch (error, stackTrace) {
-              LoggerService.instance.log(
-                level: LogLevel.warning,
-                tag: FeatureTag.database,
-                event: 'LegacyRowSkipped',
-                message:
-                    'Malformed legacy shared preferences row skipped during migration.',
-                error: error,
-                stackTrace: stackTrace,
-              );
-            }
-          }
-          if (migrated.isNotEmpty) {
-            await upsertLogs(migrated);
-          }
-          meta.sharedPrefsImported = true;
-          await prefs.remove(_legacyStorageKey);
-          LoggerService.instance.log(
-            level: LogLevel.info,
-            tag: FeatureTag.database,
-            event: 'LegacyImportComplete',
-            message: 'Legacy shared preferences import completed.',
-            context: {'importedRows': migrated.length},
-          );
-        }
-
-        if (meta.schemaVersion < currentSchemaVersion) {
-          for (var v = meta.schemaVersion + 1; v <= currentSchemaVersion; v++) {
-            if (v == 2) {
-              await _migrateToV2();
-            }
-            LoggerService.instance.log(
-              level: LogLevel.info,
-              tag: FeatureTag.database,
-              event: 'MigrationStepApplied',
-              message: 'Applied schema migration step.',
-              context: {'toVersion': v},
-            );
-          }
-          meta.schemaVersion = currentSchemaVersion;
-        }
-
-        final transactionId =
-            'meta_write_${DateTime.now().microsecondsSinceEpoch}';
-        await isar.writeTxn(() async {
-          await isar.appMetaEntitys.put(meta!);
-        });
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'MigrationMetaPersisted',
-          message: 'Migration metadata persisted.',
-          context: {
-            'transactionId': transactionId,
-            'schemaVersion': meta.schemaVersion,
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _migrateToV2() async {
-    final all = await loadLogs();
-    final upgraded = all
-        .map((e) => e.copyWith().copyWith())
-        .map(
-          (e) => LogEntry(
-            id: e.id,
-            label: e.label,
-            kind: e.kind,
-            startedAt: e.startedAt,
-            expectedDurationMinutes: e.expectedDurationMinutes,
-            status: e.status,
-            schemaVersion: currentSchemaVersion,
-            endedAt: e.endedAt,
-            parentId: e.parentId,
-            transitionCategory: e.transitionCategory,
-            abandonmentReason: e.abandonmentReason,
-            halfAlertShown: e.halfAlertShown,
-            plannedAlertShown: e.plannedAlertShown,
-          ),
-        )
-        .toList();
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.database,
-      event: 'MigrateToV2Prepared',
-      message: 'Prepared records for schema v2 migration.',
-      context: {'recordCount': upgraded.length},
-    );
-    await upsertLogs(upgraded);
+          ..points = 0
+          ..level = 1
+          ..currentStreak = 0
+          ..badgesCsv = ''
+          ..updatedAt = now();
+        await isar.gamificationProfileEntitys.put(created);
+      }
+    });
   }
 
   Future<void> _runInvariantRepair() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'RunInvariantRepair',
-      tag: FeatureTag.database,
-      operation: () async {
-        _repairEvents.clear();
-        final logs = await loadLogs();
-        if (logs.isEmpty) {
-          LoggerService.instance.log(
-            level: LogLevel.debug,
-            tag: FeatureTag.database,
-            event: 'InvariantRepairSkipped',
-            message: 'No logs available for invariant repair.',
-          );
-          return;
-        }
-
-        final result = InvariantRepairEngine(now: now).repair(logs);
-        for (final event in result.events) {
-          _repairEvents.add(RepairEvent('system', event));
-        }
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'InvariantRepairResult',
-          message: 'Invariant repair executed.',
-          context: {
-            'eventCount': result.events.length,
-            'logCount': result.logs.length,
-          },
-        );
-        await upsertLogs(result.logs);
-      },
-    );
+    _repairEvents.clear();
+    final logs = await loadLogs();
+    if (logs.isEmpty) return;
+    final result = InvariantRepairEngine(now: now).repair(logs);
+    for (final event in result.events) {
+      _repairEvents.add(RepairEvent('system', event));
+    }
+    await upsertLogs(result.logs);
   }
 
   @override
   Future<List<LogEntry>> loadLogs() async {
-    return LoggerService.instance.traceAsync<List<LogEntry>>(
-      event: 'LoadLogs',
-      tag: FeatureTag.database,
-      operation: () async {
-        await initialize();
-        final rows = await _isar!.sessionEntitys.where().findAll();
-        LoggerService.instance.log(
-          level: LogLevel.debug,
-          tag: FeatureTag.database,
-          event: 'LoadLogsResult',
-          message: 'Loaded logs from Isar.',
-          context: {'collection': 'sessionEntitys', 'resultCount': rows.length},
-        );
-        return rows.map(_fromEntity).toList();
-      },
-    );
+    await initialize();
+    final rows = await _isar!.sessionEntitys.where().findAll();
+    return rows.map(_fromEntity).toList();
   }
 
   @override
   Future<void> upsertLog(LogEntry log) async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'UpsertLog',
-      tag: FeatureTag.database,
-      context: {'collection': 'sessionEntitys', 'logId': log.id},
-      operation: () async {
-        await initialize();
-        final isar = _isar!;
-        final previous = await isar.sessionEntitys.getById(log.id);
-        final entity = _toEntity(log);
-        final transactionId = 'txn_${DateTime.now().microsecondsSinceEpoch}';
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'UpsertLogBefore',
-          message: 'Preparing upsert for single log.',
-          context: {
-            'transactionId': transactionId,
-            'before': previous == null ? null : _fromEntity(previous).toMap(),
-            'after': log.toMap(),
-          },
-        );
-        await isar.writeTxn(() async {
-          await isar.sessionEntitys.put(entity);
-        });
-      },
-    );
+    await initialize();
+    await _isar!.writeTxn(() async {
+      await _isar!.sessionEntitys.put(_toEntity(log));
+    });
   }
 
   @override
   Future<void> upsertLogs(List<LogEntry> logs) async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'UpsertLogsBatch',
-      tag: FeatureTag.database,
-      context: {'collection': 'sessionEntitys', 'count': logs.length},
-      operation: () async {
-        await initialize();
-        final isar = _isar!;
-        final entities = logs.map(_toEntity).toList();
-        final transactionId =
-            'txn_batch_${DateTime.now().microsecondsSinceEpoch}';
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'UpsertLogsBefore',
-          message: 'Preparing batch upsert.',
-          context: {
-            'transactionId': transactionId,
-            'afterIds': logs.map((e) => e.id).toList(),
-          },
-        );
-        await isar.writeTxn(() async {
-          await isar.sessionEntitys.putAll(entities);
-        });
-      },
-    );
+    await initialize();
+    final entities = logs.map(_toEntity).toList();
+    await _isar!.writeTxn(() async {
+      await _isar!.sessionEntitys.putAll(entities);
+    });
   }
 
   @override
   Future<void> deleteAll() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'DeleteAllLogs',
-      tag: FeatureTag.database,
-      context: {'collection': 'sessionEntitys'},
-      operation: () async {
-        await initialize();
-        final before = await _isar!.sessionEntitys.count();
-        final transactionId =
-            'txn_delete_${DateTime.now().microsecondsSinceEpoch}';
-        await _isar!.writeTxn(() async {
-          await _isar!.sessionEntitys.clear();
-        });
-        LoggerService.instance.log(
-          level: LogLevel.warning,
-          tag: FeatureTag.database,
-          event: 'DeleteAllCompleted',
-          message: 'All session logs deleted.',
-          context: {
-            'transactionId': transactionId,
-            'beforeCount': before,
-            'afterCount': 0,
-          },
-        );
-      },
-    );
+    await initialize();
+    await _isar!.writeTxn(() async {
+      await _isar!.sessionEntitys.clear();
+      await _isar!.dailyAnalyticsEntitys.clear();
+      await _isar!.coachRecommendationEntitys.clear();
+      await _isar!.planBlockEntitys.clear();
+      await _isar!.weeklyReportEntitys.clear();
+    });
   }
 
   Future<String> exportJson() async {
-    return LoggerService.instance.traceAsync<String>(
-      event: 'ExportJson',
-      tag: FeatureTag.database,
-      operation: () async {
-        final sessions = await loadLogs();
-        final payload = jsonEncode({
-          _exportSchemaVersionKey: currentSchemaVersion,
-          'sessions': sessions.map((s) => s.toMap()).toList(),
-        });
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'ExportJsonPrepared',
-          message: 'JSON export payload prepared.',
-          context: {'sessionCount': sessions.length, 'bytes': payload.length},
-        );
-        return payload;
-      },
-    );
+    final sessions = await loadLogs();
+    return jsonEncode({
+      _exportSchemaVersionKey: currentSchemaVersion,
+      'sessions': sessions.map((s) => s.toMap()).toList(),
+    });
   }
 
   Future<String> exportCsv() async {
-    return LoggerService.instance.traceAsync<String>(
-      event: 'ExportCsv',
-      tag: FeatureTag.database,
-      operation: () async {
-        final sessions = await loadLogs();
-        final header =
-            'id,label,kind,startedAt,endedAt,expectedDurationMinutes,status,parentId,transitionCategory,abandonmentReason,halfAlertShown,plannedAlertShown,schemaVersion';
-        final lines = sessions.map((s) {
-          String esc(String? raw) => '"${(raw ?? '').replaceAll('"', '""')}"';
-          return [
-            esc(s.id),
-            esc(s.label),
-            esc(s.kind.name),
-            esc(s.startedAt.toIso8601String()),
-            esc(s.endedAt?.toIso8601String()),
-            s.expectedDurationMinutes,
-            esc(s.status.name),
-            esc(s.parentId),
-            esc(s.transitionCategory?.name),
-            esc(s.abandonmentReason),
-            s.halfAlertShown,
-            s.plannedAlertShown,
-            s.schemaVersion,
-          ].join(',');
-        });
-        final payload = '$header\n${lines.join('\n')}';
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'ExportCsvPrepared',
-          message: 'CSV export payload prepared.',
-          context: {'sessionCount': sessions.length, 'bytes': payload.length},
-        );
-        return payload;
-      },
-    );
+    final sessions = await loadLogs();
+    final header =
+        'id,label,kind,startedAt,endedAt,expectedDurationMinutes,status,parentId,transitionCategory,abandonmentReason,halfAlertShown,plannedAlertShown,schemaVersion,tags,experimentId';
+    final lines = sessions.map((s) {
+      String esc(String? raw) => '"${(raw ?? '').replaceAll('"', '""')}"';
+      return [
+        esc(s.id),
+        esc(s.label),
+        esc(s.kind.name),
+        esc(s.startedAt.toIso8601String()),
+        esc(s.endedAt?.toIso8601String()),
+        s.expectedDurationMinutes,
+        esc(s.status.name),
+        esc(s.parentId),
+        esc(s.transitionCategory?.name),
+        esc(s.abandonmentReason),
+        s.halfAlertShown,
+        s.plannedAlertShown,
+        s.schemaVersion,
+        esc(s.tags.join('|')),
+        esc(s.experimentId),
+      ].join(',');
+    });
+    return '$header\n${lines.join('\n')}';
   }
 
   Future<void> importJson(String payload) async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'ImportJson',
-      tag: FeatureTag.database,
-      context: {'bytes': payload.length},
-      operation: () async {
-        final data = jsonDecode(payload) as Map<String, dynamic>;
-        final sessions = (data['sessions'] as List<dynamic>)
-            .map((e) => LogEntry.fromMap(e as Map<String, dynamic>))
-            .toList();
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'ImportJsonParsed',
-          message: 'Parsed sessions from JSON import payload.',
-          context: {'sessionCount': sessions.length},
-        );
-        await upsertLogs(sessions);
-        await _runInvariantRepair();
-      },
-    );
+    final data = jsonDecode(payload) as Map<String, dynamic>;
+    final sessions = (data['sessions'] as List<dynamic>)
+        .map((e) => LogEntry.fromMap(e as Map<String, dynamic>))
+        .toList();
+
+    final existing = await loadLogs();
+    final merged = <String, LogEntry>{for (final log in existing) log.id: log};
+    for (final incoming in sessions) {
+      final current = merged[incoming.id];
+      if (current == null ||
+          (incoming.endedAt ?? incoming.startedAt).isAfter(
+            current.endedAt ?? current.startedAt,
+          )) {
+        merged[incoming.id] = incoming;
+      }
+    }
+    await upsertLogs(merged.values.toList());
+    await _runInvariantRepair();
   }
 
   Future<File> saveExportToFile({
     required String fileName,
     required String content,
   }) async {
-    return LoggerService.instance.traceAsync<File>(
-      event: 'SaveExportToFile',
-      tag: FeatureTag.database,
-      context: {'fileName': fileName, 'bytes': content.length},
-      operation: () async {
-        final dir = await getApplicationDocumentsDirectory();
-        final file = File('${dir.path}/$fileName');
-        final written = await file.writeAsString(content);
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.database,
-          event: 'ExportFileWritten',
-          message: 'Export payload written to local file.',
-          context: {'path': file.path},
-        );
-        return written;
-      },
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/$fileName');
+    return file.writeAsString(content);
+  }
+
+  Future<void> saveCoachRecommendations(List<CoachRecommendation> items) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final entities = items.map((e) {
+        return CoachRecommendationEntity()
+          ..id = e.id
+          ..createdAt = now()
+          ..title = e.title
+          ..body = e.body
+          ..priority = e.priority
+          ..acknowledged = e.acknowledged;
+      }).toList();
+      await _isar!.coachRecommendationEntitys.putAll(entities);
+    });
+  }
+
+  Future<List<CoachRecommendation>> loadCoachRecommendations() async {
+    await initialize();
+    final rows = await _isar!.coachRecommendationEntitys.where().findAll();
+    return rows
+        .map(
+          (e) => CoachRecommendation(
+            id: e.id,
+            title: e.title,
+            body: e.body,
+            priority: e.priority,
+            acknowledged: e.acknowledged,
+          ),
+        )
+        .toList()
+      ..sort((a, b) => b.priority.compareTo(a.priority));
+  }
+
+  Future<void> savePlanBlocks(String dayKey, List<PlanBlock> blocks) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      await _isar!.planBlockEntitys.filter().dayKeyEqualTo(dayKey).deleteAll();
+      await _isar!.planBlockEntitys.putAll(
+        blocks.map((b) {
+          return PlanBlockEntity()
+            ..id = b.id
+            ..dayKey = dayKey
+            ..label = b.label
+            ..durationMinutes = b.durationMinutes
+            ..startHour = b.startHour
+            ..startMinute = b.startMinute
+            ..completed = b.completed;
+        }).toList(),
+      );
+    });
+  }
+
+  Future<List<PlanBlock>> loadPlanBlocks(String dayKey) async {
+    await initialize();
+    final rows = await _isar!.planBlockEntitys
+        .filter()
+        .dayKeyEqualTo(dayKey)
+        .findAll();
+    return rows
+        .map(
+          (e) => PlanBlock(
+            id: e.id,
+            label: e.label,
+            durationMinutes: e.durationMinutes,
+            startHour: e.startHour,
+            startMinute: e.startMinute,
+            completed: e.completed,
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> saveWeeklyReport(WeeklyReport report) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final e = WeeklyReportEntity()
+        ..weekKey = report.weekKey
+        ..summary = report.summary
+        ..totalSessions = report.totalSessions
+        ..avgFocus = report.averageFocus
+        ..chartPointsCsv = report.chartPoints.join(',')
+        ..generatedAt = now();
+      await _isar!.weeklyReportEntitys.put(e);
+    });
+  }
+
+  Future<WeeklyReport?> loadWeeklyReport(String weekKey) async {
+    await initialize();
+    final row = await _isar!.weeklyReportEntitys.getByWeekKey(weekKey);
+    if (row == null) return null;
+    return WeeklyReport(
+      weekKey: row.weekKey,
+      summary: row.summary,
+      totalSessions: row.totalSessions,
+      averageFocus: row.avgFocus,
+      chartPoints: row.chartPointsCsv
+          .split(',')
+          .where((e) => e.isNotEmpty)
+          .map(int.parse)
+          .toList(),
     );
+  }
+
+  Future<void> saveAnalyticsSnapshot({
+    required String key,
+    required int focus,
+    required double interruption,
+    required double reaction,
+    required int driftMinutes,
+    required int streak,
+  }) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final row = DailyAnalyticsEntity()
+        ..key = key
+        ..focusScore = focus
+        ..interruptionDensity = interruption
+        ..reactionRatio = reaction
+        ..driftMinutes = driftMinutes
+        ..streak = streak
+        ..updatedAt = now();
+      await _isar!.dailyAnalyticsEntitys.put(row);
+    });
+  }
+
+  Future<void> saveGamification({
+    required int points,
+    required int level,
+    required int streak,
+    required List<String> badges,
+  }) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final row = GamificationProfileEntity()
+        ..id = 1
+        ..points = points
+        ..level = level
+        ..currentStreak = streak
+        ..badgesCsv = badges.join('|')
+        ..updatedAt = now();
+      await _isar!.gamificationProfileEntitys.put(row);
+    });
+  }
+
+  Future<GamificationProfileEntity?> loadGamification() async {
+    await initialize();
+    return _isar!.gamificationProfileEntitys.get(1);
+  }
+
+  Future<void> upsertExperiment({
+    required String id,
+    required String name,
+    required String hypothesis,
+    required String variantA,
+    required String variantB,
+    required bool active,
+  }) async {
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final e = ExperimentEntity()
+        ..id = id
+        ..name = name
+        ..hypothesis = hypothesis
+        ..variantA = variantA
+        ..variantB = variantB
+        ..active = active
+        ..createdAt = now();
+      await _isar!.experimentEntitys.put(e);
+    });
+  }
+
+  Future<List<ExperimentEntity>> loadExperiments() async {
+    await initialize();
+    return _isar!.experimentEntitys.where().findAll();
+  }
+
+  Future<void> createBackupSnapshot() async {
+    final payload = await exportJson();
+    await initialize();
+    await _isar!.writeTxn(() async {
+      final snap = BackupSnapshotEntity()
+        ..id = 'snapshot_${now().millisecondsSinceEpoch}'
+        ..createdAt = now()
+        ..payloadJson = payload;
+      await _isar!.backupSnapshotEntitys.put(snap);
+    });
+  }
+
+  Future<bool> runIntegrityCheck() async {
+    final logs = await loadLogs();
+    final ids = <String>{};
+    for (final log in logs) {
+      if (ids.contains(log.id)) return false;
+      ids.add(log.id);
+      if (log.status != LogStatus.active && log.endedAt == null) return false;
+    }
+    return true;
   }
 
   SessionEntity _toEntity(LogEntry log) {
@@ -462,7 +426,9 @@ class IsarLogRepository implements LogRepository {
       ..abandonmentReason = log.abandonmentReason
       ..halfAlertShown = log.halfAlertShown
       ..plannedAlertShown = log.plannedAlertShown
-      ..schemaVersion = log.schemaVersion;
+      ..schemaVersion = log.schemaVersion
+      ..tagsCsv = log.tags.join('|')
+      ..experimentId = log.experimentId;
   }
 
   LogEntry _fromEntity(SessionEntity e) {
@@ -484,6 +450,10 @@ class IsarLogRepository implements LogRepository {
       abandonmentReason: e.abandonmentReason,
       halfAlertShown: e.halfAlertShown,
       plannedAlertShown: e.plannedAlertShown,
+      tags: (e.tagsCsv ?? '').isEmpty
+          ? const <String>[]
+          : e.tagsCsv!.split('|'),
+      experimentId: e.experimentId,
     );
   }
 }

@@ -26,6 +26,8 @@ class LogEntry {
     this.abandonmentReason,
     this.halfAlertShown = false,
     this.plannedAlertShown = false,
+    this.tags = const <String>[],
+    this.experimentId,
   });
 
   final String id;
@@ -41,6 +43,8 @@ class LogEntry {
   final String? abandonmentReason;
   final bool halfAlertShown;
   final bool plannedAlertShown;
+  final List<String> tags;
+  final String? experimentId;
 
   Duration get expectedDuration => Duration(minutes: expectedDurationMinutes);
 
@@ -61,6 +65,8 @@ class LogEntry {
     String? id,
     String? parentId,
     bool clearParentId = false,
+    List<String>? tags,
+    String? experimentId,
   }) {
     return LogEntry(
       id: id ?? this.id,
@@ -76,6 +82,8 @@ class LogEntry {
       abandonmentReason: abandonmentReason ?? this.abandonmentReason,
       halfAlertShown: halfAlertShown ?? this.halfAlertShown,
       plannedAlertShown: plannedAlertShown ?? this.plannedAlertShown,
+      tags: tags ?? this.tags,
+      experimentId: experimentId ?? this.experimentId,
     );
   }
 
@@ -110,6 +118,8 @@ class LogEntry {
       'abandonmentReason': abandonmentReason,
       'halfAlertShown': halfAlertShown,
       'plannedAlertShown': plannedAlertShown,
+      'tags': tags,
+      'experimentId': experimentId,
     };
   }
 
@@ -163,6 +173,10 @@ class LogEntry {
       plannedAlertShown: map['plannedAlertShown'] is bool
           ? map['plannedAlertShown'] as bool
           : false,
+      tags: map['tags'] is List
+          ? (map['tags'] as List<dynamic>).whereType<String>().toList()
+          : const <String>[],
+      experimentId: _asString(map['experimentId']),
     );
   }
 
