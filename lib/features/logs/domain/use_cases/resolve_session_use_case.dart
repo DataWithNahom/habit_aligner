@@ -22,7 +22,14 @@ class ResolveSessionUseCase {
       case LogStatus.completed:
         resolved = current.complete(now());
       case LogStatus.paused:
-        resolved = current.pause(now());
+        final normalizedReason = reason?.trim();
+        resolved = current
+            .pause(now())
+            .copyWith(
+              abandonmentReason: normalizedReason?.isNotEmpty == true
+                  ? normalizedReason
+                  : null,
+            );
       case LogStatus.abandoned:
         resolved = current.abandon(
           now(),
