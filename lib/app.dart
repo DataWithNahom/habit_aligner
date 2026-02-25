@@ -17,10 +17,14 @@ class HabitAlignerApp extends StatefulWidget {
 class _HabitAlignerAppState extends State<HabitAlignerApp> {
   final _lifecycleObserver = AppLifecycleLogger();
   final _navigatorObserver = LoggingNavigatorObserver();
+  late final IsarLogRepository _repository;
+  late final LogController _controller;
 
   @override
   void initState() {
     super.initState();
+    _repository = IsarLogRepository();
+    _controller = LogController(repository: _repository);
     LoggerService.instance.log(
       level: LogLevel.info,
       tag: FeatureTag.init,
@@ -33,6 +37,7 @@ class _HabitAlignerAppState extends State<HabitAlignerApp> {
   @override
   void dispose() {
     _lifecycleObserver.detach();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -43,9 +48,7 @@ class _HabitAlignerAppState extends State<HabitAlignerApp> {
       debugShowCheckedModeBanner: false,
       navigatorObservers: [_navigatorObserver],
       theme: buildAppTheme(),
-      home: MainScreen(
-        controller: LogController(repository: IsarLogRepository()),
-      ),
+      home: MainScreen(controller: _controller),
     );
   }
 }
