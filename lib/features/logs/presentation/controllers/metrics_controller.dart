@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../../core/logging/logger_service.dart';
 import '../../data/log_repository.dart';
 import '../../domain/use_cases/compute_focus_score_use_case.dart';
 import '../../domain/use_cases/compute_streak_use_case.dart';
@@ -40,34 +41,69 @@ class MetricsController extends ChangeNotifier {
   MetricsSnapshot get snapshot => _cached;
 
   Future<void> refresh({bool force = false}) async {
-    final day = DateTime.now();
-    final key = DateTime(day.year, day.month, day.day);
-    if (!force && _cachedDay == key) return;
+    await LoggerService.instance.traceAsync<void>(
+      event: 'MetricsRefresh',
+      tag: FeatureTag.system,
+      context: {'force': force},
+      operation: () async {
+        final day = DateTime.now();
+        final key = DateTime(day.year, day.month, day.day);
+        if (!force && _cachedDay == key) {
+          LoggerService.instance.log(
+            level: LogLevel.debug,
+            tag: FeatureTag.system,
+            event: 'MetricsRefreshSkipped',
+            message: 'Metrics refresh skipped due to cache hit.',
+            context: {'cachedDay': _cachedDay?.toIso8601String()},
+          );
+          return;
+        }
 
-    final sessions = await _repository.loadLogs();
-    final today = sessions
-        .where(
-          (s) =>
-              s.startedAt.year == key.year &&
-              s.startedAt.month == key.month &&
-              s.startedAt.day == key.day,
-        )
-        .toList();
-    final focus = _focus(today);
-    final streak = _streak(sessions);
+        final sessions = await _repository.loadLogs();
+        final today = sessions
+            .where(
+              (s) =>
+                  s.startedAt.year == key.year &&
+                  s.startedAt.month == key.month &&
+                  s.startedAt.day == key.day,
+            )
+            .toList();
+        final focus = _focus(today);
+        final streak = _streak(sessions);
 
-    _cached = MetricsSnapshot(
-      focusScore: focus.score,
-      interruptionDensity: focus.interruptionDensity,
-      reactionRatio: focus.reactionRatio,
-      driftDuration: Duration(minutes: focus.driftPenaltyMinutes),
-      streak: streak,
+        _cached = MetricsSnapshot(
+          focusScore: focus.score,
+          interruptionDensity: focus.interruptionDensity,
+          reactionRatio: focus.reactionRatio,
+          driftDuration: Duration(minutes: focus.driftPenaltyMinutes),
+          streak: streak,
+        );
+        _cachedDay = key;
+        LoggerService.instance.log(
+          level: LogLevel.info,
+          tag: FeatureTag.system,
+          event: 'MetricsUpdated',
+          message: 'Metrics snapshot recalculated.',
+          context: {
+            'focusScore': _cached.focusScore,
+            'interruptionDensity': _cached.interruptionDensity,
+            'reactionRatio': _cached.reactionRatio,
+            'driftDurationMs': _cached.driftDuration.inMilliseconds,
+            'streak': _cached.streak,
+          },
+        );
+        notifyListeners();
+      },
     );
-    _cachedDay = key;
-    notifyListeners();
   }
 
   void invalidate() {
     _cachedDay = null;
+    LoggerService.instance.log(
+      level: LogLevel.debug,
+      tag: FeatureTag.system,
+      event: 'MetricsCacheInvalidated',
+      message: 'Metrics cache invalidated.',
+    );
   }
 }
