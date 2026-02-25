@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/logging/logger_service.dart';
 import '../domain/log_entry.dart';
 import 'log_controller.dart';
 
@@ -18,12 +19,24 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.lifecycle,
+      event: 'MainScreenInitState',
+      message: 'MainScreen initialized and controller listener attached.',
+    );
     widget.controller.addListener(_onStateChanged);
     widget.controller.initialize();
   }
 
   @override
   void dispose() {
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.lifecycle,
+      event: 'MainScreenDispose',
+      message: 'MainScreen disposed and controller listener removed.',
+    );
     widget.controller.removeListener(_onStateChanged);
     widget.controller.dispose();
     super.dispose();
@@ -34,6 +47,12 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {});
 
     if (!_handlingDialog && widget.controller.halfTimeAlertDue) {
+      LoggerService.instance.log(
+        level: LogLevel.info,
+        tag: FeatureTag.notification,
+        event: 'HalfTimeDialogQueued',
+        message: 'Half-time alert dialog queued for display.',
+      );
       _handlingDialog = true;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _showHalfTimeDialog(),
@@ -42,6 +61,12 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     if (!_handlingDialog && widget.controller.plannedDurationAlertDue) {
+      LoggerService.instance.log(
+        level: LogLevel.info,
+        tag: FeatureTag.notification,
+        event: 'PlannedDurationDialogQueued',
+        message: 'Planned-duration alert dialog queued for display.',
+      );
       _handlingDialog = true;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _showPlannedDurationDialog(),
@@ -50,6 +75,12 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _showHalfTimeDialog() async {
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.notification,
+      event: 'HalfTimeDialogShown',
+      message: 'Half-time alert dialog shown.',
+    );
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -59,6 +90,12 @@ class _MainScreenState extends State<MainScreen> {
           actions: [
             TextButton(
               onPressed: () {
+                LoggerService.instance.log(
+                  level: LogLevel.info,
+                  tag: FeatureTag.userAction,
+                  event: 'HalfTimeDialogContinueTapped',
+                  message: 'User selected continue from half-time dialog.',
+                );
                 widget.controller.dismissHalfTimeAlert();
                 Navigator.of(context).pop();
               },
@@ -66,6 +103,12 @@ class _MainScreenState extends State<MainScreen> {
             ),
             FilledButton(
               onPressed: () {
+                LoggerService.instance.log(
+                  level: LogLevel.info,
+                  tag: FeatureTag.userAction,
+                  event: 'HalfTimeDialogTransitionTapped',
+                  message: 'User selected transition from half-time dialog.',
+                );
                 widget.controller.dismissHalfTimeAlert();
                 Navigator.of(context).pop();
                 _openTransitionFlow();
@@ -80,6 +123,12 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _showPlannedDurationDialog() async {
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.notification,
+      event: 'PlannedDurationDialogShown',
+      message: 'Planned-duration alert dialog shown.',
+    );
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -90,6 +139,13 @@ class _MainScreenState extends State<MainScreen> {
           actions: [
             TextButton(
               onPressed: () {
+                LoggerService.instance.log(
+                  level: LogLevel.info,
+                  tag: FeatureTag.userAction,
+                  event: 'PlannedDialogContinueTapped',
+                  message:
+                      'User selected continue current from planned-duration dialog.',
+                );
                 widget.controller.dismissPlannedDurationAlert();
                 Navigator.of(context).pop();
               },
@@ -97,6 +153,13 @@ class _MainScreenState extends State<MainScreen> {
             ),
             FilledButton(
               onPressed: () {
+                LoggerService.instance.log(
+                  level: LogLevel.info,
+                  tag: FeatureTag.userAction,
+                  event: 'PlannedDialogTransitionTapped',
+                  message:
+                      'User selected transition now from planned-duration dialog.',
+                );
                 widget.controller.dismissPlannedDurationAlert();
                 Navigator.of(context).pop();
                 _openTransitionFlow();
@@ -130,8 +193,26 @@ class _MainScreenState extends State<MainScreen> {
                       const SizedBox(height: 12),
                       FilledButton.icon(
                         onPressed: controller.activeLog == null
-                            ? () => _openStartSheet()
-                            : _openTransitionFlow,
+                            ? () {
+                                LoggerService.instance.log(
+                                  level: LogLevel.info,
+                                  tag: FeatureTag.userAction,
+                                  event: 'PrimaryStartButtonTapped',
+                                  message:
+                                      'User tapped start intentional action button.',
+                                );
+                                _openStartSheet();
+                              }
+                            : () {
+                                LoggerService.instance.log(
+                                  level: LogLevel.info,
+                                  tag: FeatureTag.userAction,
+                                  event: 'PrimaryTransitionButtonTapped',
+                                  message:
+                                      'User tapped resolve and transition button.',
+                                );
+                                _openTransitionFlow();
+                              },
                         icon: const Icon(Icons.track_changes_rounded, size: 18),
                         label: Text(
                           controller.activeLog == null
@@ -185,11 +266,27 @@ class _MainScreenState extends State<MainScreen> {
                         spacing: 8,
                         children: [
                           OutlinedButton(
-                            onPressed: () => controller.exportJson(),
+                            onPressed: () {
+                              LoggerService.instance.log(
+                                level: LogLevel.info,
+                                tag: FeatureTag.userAction,
+                                event: 'ExportJsonTapped',
+                                message: 'User requested JSON export.',
+                              );
+                              controller.exportJson();
+                            },
                             child: const Text('Export JSON'),
                           ),
                           OutlinedButton(
-                            onPressed: () => controller.exportCsv(),
+                            onPressed: () {
+                              LoggerService.instance.log(
+                                level: LogLevel.info,
+                                tag: FeatureTag.userAction,
+                                event: 'ExportCsvTapped',
+                                message: 'User requested CSV export.',
+                              );
+                              controller.exportCsv();
+                            },
                             child: const Text('Export CSV'),
                           ),
                         ],
@@ -206,6 +303,16 @@ class _MainScreenState extends State<MainScreen> {
     String? parentId,
     TransitionCategory? transitionCategory,
   }) async {
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.ui,
+      event: 'OpenStartSheet',
+      message: 'Opening start-session bottom sheet.',
+      context: {
+        'parentId': parentId,
+        'transitionCategory': transitionCategory?.name,
+      },
+    );
     final labelController = TextEditingController();
     final expectedController = TextEditingController(text: '30');
     BehaviorKind selectedKind = BehaviorKind.intentionalAction;
@@ -265,6 +372,13 @@ class _MainScreenState extends State<MainScreen> {
                         .toList(),
                     onChanged: (value) {
                       if (value == null) return;
+                      LoggerService.instance.log(
+                        level: LogLevel.info,
+                        tag: FeatureTag.userAction,
+                        event: 'BehaviorKindChanged',
+                        message: 'User changed behavior kind selector.',
+                        context: {'selectedKind': value.name},
+                      );
                       setStateModal(() => selectedKind = value);
                     },
                     decoration: const InputDecoration(
@@ -277,6 +391,17 @@ class _MainScreenState extends State<MainScreen> {
                       final label = labelController.text.trim();
                       final expected =
                           int.tryParse(expectedController.text) ?? 0;
+                      LoggerService.instance.log(
+                        level: LogLevel.info,
+                        tag: FeatureTag.userAction,
+                        event: 'StartSheetSubmitTapped',
+                        message: 'User tapped start button in start sheet.',
+                        context: {
+                          'label': label,
+                          'expectedDurationMinutes': expected,
+                          'kind': selectedKind.name,
+                        },
+                      );
                       if (label.isEmpty || expected <= 0) return;
 
                       await widget.controller.startLog(
@@ -303,6 +428,13 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _openTransitionFlow() async {
+    LoggerService.instance.log(
+      level: LogLevel.info,
+      tag: FeatureTag.ui,
+      event: 'OpenTransitionFlow',
+      message: 'Opening transition flow dialog.',
+      context: {'hasActive': widget.controller.activeLog != null},
+    );
     final active = widget.controller.activeLog;
     if (active == null) {
       await _openStartSheet();
@@ -347,6 +479,14 @@ class _MainScreenState extends State<MainScreen> {
                       ],
                       selected: {resolution},
                       onSelectionChanged: (selection) {
+                        LoggerService.instance.log(
+                          level: LogLevel.info,
+                          tag: FeatureTag.userAction,
+                          event: 'TransitionResolutionChanged',
+                          message:
+                              'User changed transition resolution selection.',
+                          context: {'resolution': selection.first},
+                        );
                         setDialogState(() => resolution = selection.first);
                       },
                     ),
@@ -374,6 +514,13 @@ class _MainScreenState extends State<MainScreen> {
                           .toList(),
                       onChanged: (value) {
                         if (value == null) return;
+                        LoggerService.instance.log(
+                          level: LogLevel.info,
+                          tag: FeatureTag.userAction,
+                          event: 'TransitionCategoryChanged',
+                          message: 'User changed transition category.',
+                          context: {'category': value.name},
+                        );
                         setDialogState(() => selectedCategory = value);
                       },
                       decoration: const InputDecoration(
@@ -385,11 +532,29 @@ class _MainScreenState extends State<MainScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    LoggerService.instance.log(
+                      level: LogLevel.info,
+                      tag: FeatureTag.userAction,
+                      event: 'TransitionDialogCancelTapped',
+                      message: 'User canceled transition dialog.',
+                    );
+                    Navigator.of(context).pop();
+                  },
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
                   onPressed: () async {
+                    LoggerService.instance.log(
+                      level: LogLevel.info,
+                      tag: FeatureTag.userAction,
+                      event: 'TransitionResolveTapped',
+                      message: 'User confirmed transition resolution.',
+                      context: {
+                        'resolution': resolution,
+                        'category': selectedCategory.name,
+                      },
+                    );
                     if (resolution == 'complete') {
                       await widget.controller.completeActiveLog();
                     } else if (resolution == 'pause') {
