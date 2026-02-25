@@ -122,47 +122,52 @@ class _MainScreenState extends State<MainScreen> {
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _ActivePanel(controller: controller),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: controller.activeLog == null
-                          ? () => _openStartSheet()
-                          : _openTransitionFlow,
-                      icon: const Icon(Icons.track_changes_rounded, size: 18),
-                      label: Text(
-                        controller.activeLog == null
-                            ? 'Start intentional action'
-                            : 'Resolve and transition',
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ActivePanel(controller: controller),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: controller.activeLog == null
+                            ? () => _openStartSheet()
+                            : _openTransitionFlow,
+                        icon: const Icon(Icons.track_changes_rounded, size: 18),
+                        label: Text(
+                          controller.activeLog == null
+                              ? 'Start intentional action'
+                              : 'Resolve and transition',
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    _MetricsPanel(metrics: metrics),
-                    const SizedBox(height: 16),
-                    const _SectionHeader(
-                      title: 'Daily timeline',
-                      subtitle:
-                          'Chronological reconstruction of resolved states.',
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: controller.todayTimeline.isEmpty
-                          ? const Center(
-                              child: Text('No timeline records for today.'),
-                            )
-                          : ListView.separated(
-                              itemCount: controller.todayTimeline.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final log = controller.todayTimeline[index];
-                                return _TimelineTile(log: log);
-                              },
-                            ),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      _MetricsPanel(metrics: metrics),
+                      const SizedBox(height: 16),
+                      const _SectionHeader(
+                        title: 'Daily timeline',
+                        subtitle:
+                            'Chronological reconstruction of resolved states.',
+                      ),
+                      const SizedBox(height: 8),
+                      if (controller.todayTimeline.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: Text('No timeline records for today.'),
+                          ),
+                        )
+                      else
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: controller.todayTimeline.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final log = controller.todayTimeline[index];
+                            return _TimelineTile(log: log);
+                          },
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -221,6 +226,7 @@ class _MainScreenState extends State<MainScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<BehaviorKind>(
                     initialValue: selectedKind,
+                    isExpanded: true,
                     items: BehaviorKind.values
                         .map(
                           (kind) => DropdownMenuItem(
@@ -329,6 +335,7 @@ class _MainScreenState extends State<MainScreen> {
                     const SizedBox(height: 8),
                     DropdownButtonFormField<TransitionCategory>(
                       initialValue: selectedCategory,
+                      isExpanded: true,
                       items: TransitionCategory.values
                           .map(
                             (category) => DropdownMenuItem(
