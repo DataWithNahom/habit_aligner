@@ -9,14 +9,26 @@ class HabitAlignerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const surface = Color(0xFF0F1115);
+    const panel = Color(0xFF171A20);
+    const accent = Color(0xFF8FA3B8);
+
     return MaterialApp(
-      title: 'Habit Aligner',
+      title: 'Behavioral OS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueGrey,
-          brightness: Brightness.light,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: surface,
+        colorScheme: const ColorScheme.dark(
+          surface: surface,
+          primary: accent,
+          secondary: accent,
+        ),
+        cardTheme: const CardThemeData(color: panel),
+        textTheme: const TextTheme(
+          titleMedium: TextStyle(fontWeight: FontWeight.w700),
+          titleLarge: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
       home: MainScreen(
