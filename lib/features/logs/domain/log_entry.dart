@@ -1,65 +1,118 @@
 import 'dart:convert';
 
-enum LogType { stop, start }
+enum BehaviorKind { intentionalAction, correctiveStop, intentionalBreak, drift }
+
+enum LogStatus { active, paused, completed, abandoned }
+
+enum TransitionCategory {
+  urgentImportant,
+  importantNotUrgent,
+  urgentNotImportant,
+  neither,
+}
 
 class LogEntry {
   LogEntry({
     required this.id,
-    required this.description,
-    required this.type,
-    required this.startTime,
-    this.endTime,
-    this.durationSeconds,
-    this.resolved = false,
+    required this.label,
+    required this.kind,
+    required this.startedAt,
+    required this.expectedDurationMinutes,
+    required this.status,
+    this.endedAt,
+    this.parentId,
+    this.transitionCategory,
+    this.abandonmentReason,
   });
 
   final String id;
-  final String description;
-  final LogType type;
-  final DateTime startTime;
-  final DateTime? endTime;
-  final int? durationSeconds;
-  final bool resolved;
+  final String label;
+  final BehaviorKind kind;
+  final DateTime startedAt;
+  final int expectedDurationMinutes;
+  final LogStatus status;
+  final DateTime? endedAt;
+  final String? parentId;
+  final TransitionCategory? transitionCategory;
+  final String? abandonmentReason;
 
-  Duration? get duration =>
-      durationSeconds == null ? null : Duration(seconds: durationSeconds!);
+  Duration get expectedDuration => Duration(minutes: expectedDurationMinutes);
+
+  Duration get actualDuration {
+    final end = endedAt ?? DateTime.now();
+    return end.difference(startedAt);
+  }
+
+  bool get isActive => status == LogStatus.active;
 
   LogEntry complete(DateTime completedAt) {
-    final seconds = completedAt.difference(startTime).inSeconds;
+    return _copyWith(status: LogStatus.completed, endedAt: completedAt);
+  }
+
+  LogEntry pause(DateTime pausedAt) {
+    return _copyWith(status: LogStatus.paused, endedAt: pausedAt);
+  }
+
+  LogEntry abandon(DateTime abandonedAt, String reason) {
+    return _copyWith(
+      status: LogStatus.abandoned,
+      endedAt: abandonedAt,
+      abandonmentReason: reason,
+    );
+  }
+
+  LogEntry _copyWith({
+    LogStatus? status,
+    DateTime? endedAt,
+    String? abandonmentReason,
+  }) {
     return LogEntry(
       id: id,
-      description: description,
-      type: type,
-      startTime: startTime,
-      endTime: completedAt,
-      durationSeconds: seconds,
-      resolved: true,
+      label: label,
+      kind: kind,
+      startedAt: startedAt,
+      expectedDurationMinutes: expectedDurationMinutes,
+      status: status ?? this.status,
+      endedAt: endedAt ?? this.endedAt,
+      parentId: parentId,
+      transitionCategory: transitionCategory,
+      abandonmentReason: abandonmentReason ?? this.abandonmentReason,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'description': description,
-      'type': type.name,
-      'startTime': startTime.toIso8601String(),
-      'endTime': endTime?.toIso8601String(),
-      'durationSeconds': durationSeconds,
-      'resolved': resolved,
+      'label': label,
+      'kind': kind.name,
+      'startedAt': startedAt.toIso8601String(),
+      'expectedDurationMinutes': expectedDurationMinutes,
+      'status': status.name,
+      'endedAt': endedAt?.toIso8601String(),
+      'parentId': parentId,
+      'transitionCategory': transitionCategory?.name,
+      'abandonmentReason': abandonmentReason,
     };
   }
 
   factory LogEntry.fromMap(Map<String, dynamic> map) {
     return LogEntry(
       id: map['id'] as String,
-      description: map['description'] as String,
-      type: LogType.values.firstWhere((item) => item.name == map['type']),
-      startTime: DateTime.parse(map['startTime'] as String),
-      endTime: map['endTime'] == null
+      label: map['label'] as String,
+      kind: BehaviorKind.values.firstWhere((item) => item.name == map['kind']),
+      startedAt: DateTime.parse(map['startedAt'] as String),
+      expectedDurationMinutes: map['expectedDurationMinutes'] as int,
+      status: LogStatus.values.firstWhere((item) => item.name == map['status']),
+      endedAt: map['endedAt'] == null
           ? null
-          : DateTime.parse(map['endTime'] as String),
-      durationSeconds: map['durationSeconds'] as int?,
-      resolved: map['resolved'] as bool? ?? false,
+          : DateTime.parse(map['endedAt'] as String),
+      parentId: map['parentId'] as String?,
+      transitionCategory: map['transitionCategory'] == null
+          ? null
+          : TransitionCategory.values.firstWhere(
+              (item) => item.name == map['transitionCategory'],
+            ),
+      abandonmentReason: map['abandonmentReason'] as String?,
     );
   }
 
