@@ -13,7 +13,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  bool _handlingDialog = false;
+  bool _showingBlockingDialog = false;
 
   @override
   void initState() {
@@ -33,90 +33,58 @@ class _MainScreenState extends State<MainScreen> {
     if (!mounted) return;
     setState(() {});
 
-    if (!_handlingDialog && widget.controller.halfTimeAlertDue) {
-      _handlingDialog = true;
+    final active = widget.controller.activeLog;
+    if (active != null && !_showingBlockingDialog) {
+      _showingBlockingDialog = true;
       WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _showHalfTimeDialog(),
+        (_) => _showBlockingDialog(),
       );
+    }
+  }
+
+  Future<void> _showBlockingDialog() async {
+    final active = widget.controller.activeLog;
+    if (active == null || !mounted) {
+      _showingBlockingDialog = false;
       return;
     }
 
-    if (!_handlingDialog && widget.controller.plannedDurationAlertDue) {
-      _handlingDialog = true;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _showPlannedDurationDialog(),
-      );
-    }
-  }
-
-  Future<void> _showHalfTimeDialog() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Half-time checkpoint'),
-          content: const Text('Continue current action or transition.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                widget.controller.dismissHalfTimeAlert();
-                Navigator.of(context).pop();
-              },
-              child: const Text('Continue'),
-            ),
-            FilledButton(
-              onPressed: () {
-                widget.controller.dismissHalfTimeAlert();
-                Navigator.of(context).pop();
-                _openTransitionFlow();
-              },
-              child: const Text('Transition'),
-            ),
-          ],
-        );
-      },
-    );
-    _handlingDialog = false;
-  }
-
-  Future<void> _showPlannedDurationDialog() async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('Planned duration reached'),
-          content: const Text('Are you still working on this action?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                widget.controller.dismissPlannedDurationAlert();
-                Navigator.of(context).pop();
-              },
-              child: const Text('Continue current'),
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('Unresolved behavior active'),
+            content: Text(
+              'You must resolve this entry before continuing:\n\n"${active.description}"',
             ),
-            FilledButton(
-              onPressed: () {
-                widget.controller.dismissPlannedDurationAlert();
-                Navigator.of(context).pop();
-                _openTransitionFlow();
-              },
-              child: const Text('Transition now'),
-            ),
-          ],
+            actions: [
+              FilledButton(
+                onPressed: () async {
+                  await widget.controller.completeActiveLog();
+                  if (context.mounted) {
+                    Navigator.of(context).pop();
+                  }
+                },
+                child: const Text('Confirm resolved'),
+              ),
+            ],
+          ),
         );
       },
     );
-    _handlingDialog = false;
+
+    _showingBlockingDialog = false;
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    final metrics = controller.todayMetrics;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Behavioral Operating System')),
+      appBar: AppBar(title: const Text('Behavior Resolution Log')),
       body: controller.isLoading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -125,42 +93,36 @@ class _MainScreenState extends State<MainScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _ActivePanel(controller: controller),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                   FilledButton(
                     onPressed: controller.activeLog == null
-                        ? () => _openStartSheet()
-                        : _openTransitionFlow,
-                    child: Text(
-                      controller.activeLog == null
-                          ? 'Start intentional action'
-                          : 'Resolve and transition',
-                    ),
+                        ? () => _openCreateSheet(context, controller)
+                        : null,
+                    child: const Text('Create new log'),
                   ),
                   const SizedBox(height: 16),
-                  _MetricsPanel(metrics: metrics),
-                  const SizedBox(height: 16),
                   Text(
-                    'Daily timeline',
+                    'History',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
                   Expanded(
-                    child: controller.todayTimeline.isEmpty
-                        ? const Center(
-                            child: Text('No timeline records for today.'),
-                          )
+                    child: controller.logs.isEmpty
+                        ? const Center(child: Text('No logs yet'))
                         : ListView.separated(
-                            itemCount: controller.todayTimeline.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 12),
+                            itemCount: controller.logs.length,
+                            separatorBuilder: (_, _) => const Divider(),
                             itemBuilder: (context, index) {
-                              final log = controller.todayTimeline[index];
+                              final log = controller.logs[index];
                               return ListTile(
-                                title: Text(log.label),
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(log.description),
                                 subtitle: Text(
-                                  '${_formatDate(log.startedAt)} - ${log.endedAt == null ? 'Active' : _formatDate(log.endedAt!)} • ${_kindLabel(log.kind)}',
+                                  '${_label(log.type)} • ${_formatDate(log.startTime)}',
                                 ),
-                                trailing: Text(_statusLabel(log.status)),
+                                trailing: log.resolved
+                                    ? Text(_formatDuration(log.duration!))
+                                    : const Text('OPEN'),
                               );
                             },
                           ),
@@ -171,20 +133,19 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Future<void> _openStartSheet({
-    String? parentId,
-    TransitionCategory? transitionCategory,
-  }) async {
-    final labelController = TextEditingController();
-    final expectedController = TextEditingController(text: '30');
-    BehaviorKind selectedKind = BehaviorKind.intentionalAction;
+  Future<void> _openCreateSheet(
+    BuildContext context,
+    LogController controller,
+  ) async {
+    final textController = TextEditingController();
+    LogType selectedType = LogType.stop;
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (context) {
         return StatefulBuilder(
-          builder: (context, setStateModal) {
+          builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.fromLTRB(
                 16,
@@ -197,175 +158,51 @@ class _MainScreenState extends State<MainScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   TextField(
-                    controller: labelController,
+                    controller: textController,
                     decoration: const InputDecoration(
-                      labelText: 'Action label',
+                      labelText: 'Describe what you need to resolve',
                     ),
                     autofocus: true,
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: expectedController,
-                    decoration: const InputDecoration(
-                      labelText: 'Expected duration (minutes)',
-                    ),
-                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<BehaviorKind>(
-                    initialValue: selectedKind,
-                    items: BehaviorKind.values
-                        .map(
-                          (kind) => DropdownMenuItem(
-                            value: kind,
-                            child: Text(_kindLabel(kind)),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setStateModal(() => selectedKind = value);
+                  SegmentedButton<LogType>(
+                    segments: const [
+                      ButtonSegment<LogType>(
+                        value: LogType.stop,
+                        label: Text('I need to STOP something'),
+                      ),
+                      ButtonSegment<LogType>(
+                        value: LogType.start,
+                        label: Text('I need to START something'),
+                      ),
+                    ],
+                    selected: {selectedType},
+                    onSelectionChanged: (selection) {
+                      setModalState(() {
+                        selectedType = selection.first;
+                      });
                     },
-                    decoration: const InputDecoration(
-                      labelText: 'Behavior state',
-                    ),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
                     onPressed: () async {
-                      final label = labelController.text.trim();
-                      final expected =
-                          int.tryParse(expectedController.text) ?? 0;
-                      if (label.isEmpty || expected <= 0) return;
+                      final description = textController.text.trim();
+                      if (description.isEmpty) return;
 
-                      await widget.controller.startLog(
-                        label: label,
-                        kind: selectedKind,
-                        expectedDurationMinutes: expected,
-                        parentId: parentId,
-                        transitionCategory: transitionCategory,
+                      await controller.createLog(
+                        description: description,
+                        type: selectedType,
                       );
 
                       if (context.mounted) {
                         Navigator.of(context).pop();
                       }
                     },
-                    child: const Text('Start'),
+                    child: const Text('Start timer now'),
                   ),
                 ],
               ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _openTransitionFlow() async {
-    final active = widget.controller.activeLog;
-    if (active == null) {
-      await _openStartSheet();
-      return;
-    }
-
-    TransitionCategory selectedCategory = TransitionCategory.importantNotUrgent;
-    String resolution = 'pause';
-    final abandonReasonController = TextEditingController();
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Transition classification required'),
-              content: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Current action: ${active.label}'),
-                    const SizedBox(height: 12),
-                    const Text('Resolve current action before switching:'),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment<String>(
-                          value: 'complete',
-                          label: Text('Completed'),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'pause',
-                          label: Text('Paused'),
-                        ),
-                        ButtonSegment<String>(
-                          value: 'abandon',
-                          label: Text('Abandoned'),
-                        ),
-                      ],
-                      selected: {resolution},
-                      onSelectionChanged: (selection) {
-                        setDialogState(() => resolution = selection.first);
-                      },
-                    ),
-                    if (resolution == 'abandon')
-                      TextField(
-                        controller: abandonReasonController,
-                        decoration: const InputDecoration(
-                          labelText: 'Abandonment reason',
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<TransitionCategory>(
-                      initialValue: selectedCategory,
-                      items: TransitionCategory.values
-                          .map(
-                            (category) => DropdownMenuItem(
-                              value: category,
-                              child: Text(_transitionLabel(category)),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setDialogState(() => selectedCategory = value);
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Reason for switching',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    if (resolution == 'complete') {
-                      await widget.controller.completeActiveLog();
-                    } else if (resolution == 'pause') {
-                      await widget.controller.pauseActiveLog();
-                    } else {
-                      final reason = abandonReasonController.text.trim();
-                      if (reason.isEmpty) return;
-                      await widget.controller.abandonActiveLog(reason);
-                    }
-
-                    if (context.mounted) {
-                      Navigator.of(context).pop();
-                    }
-
-                    await _openStartSheet(
-                      parentId: active.id,
-                      transitionCategory: selectedCategory,
-                    );
-                  },
-                  child: const Text('Resolve and continue'),
-                ),
-              ],
             );
           },
         );
@@ -391,11 +228,11 @@ class _ActivePanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'State: Unassigned',
+                'No active unresolved log',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 4),
-              const Text('Define the next intentional action to assign time.'),
+              const Text('Create one entry when you are avoiding or drifting.'),
             ],
           ),
         ),
@@ -403,61 +240,25 @@ class _ActivePanel extends StatelessWidget {
     }
 
     return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'State: ${_kindLabel(active.kind)}',
+              'ACTIVE: ${_label(active.type)}',
               style: Theme.of(context).textTheme.labelLarge,
             ),
-            const SizedBox(height: 6),
-            Text(active.label, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            Text('Started ${_formatDate(active.startedAt)}'),
-            Text('Expected ${active.expectedDurationMinutes} min'),
-            Text('Elapsed ${_formatDuration(controller.activeElapsed)}'),
-            if (active.parentId != null)
-              Text('Lineage link ${active.parentId}'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricsPanel extends StatelessWidget {
-  const _MetricsPanel({required this.metrics});
-
-  final DailyMetrics metrics;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
             Text(
-              'Daily analytics',
+              active.description,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            Text(
-              'Planned vs actual accuracy: ${(metrics.plannedVsActualAccuracy * 100).toStringAsFixed(1)}%',
-            ),
-            Text(
-              'Deviation frequency: ${(metrics.deviationFrequency * 100).toStringAsFixed(1)}%',
-            ),
-            Text('Drift duration: ${_formatDuration(metrics.driftDuration)}'),
-            Text(
-              'Reaction ratio: ${(metrics.reactionRatio * 100).toStringAsFixed(1)}%',
-            ),
-            Text(
-              'Interruption density: ${(metrics.interruptionDensity * 100).toStringAsFixed(1)}%',
-            ),
+            Text('Started: ${_formatDate(active.startTime)}'),
+            const SizedBox(height: 4),
+            Text('Elapsed: ${_formatDuration(controller.activeElapsed)}'),
           ],
         ),
       ),
@@ -465,37 +266,19 @@ class _MetricsPanel extends StatelessWidget {
   }
 }
 
-String _kindLabel(BehaviorKind kind) {
-  return switch (kind) {
-    BehaviorKind.intentionalAction => 'Intentional action',
-    BehaviorKind.correctiveStop => 'Corrective stop',
-    BehaviorKind.intentionalBreak => 'Intentional break',
-    BehaviorKind.drift => 'Drift awareness',
-  };
-}
-
-String _transitionLabel(TransitionCategory category) {
-  return switch (category) {
-    TransitionCategory.urgentImportant => 'Urgent & important',
-    TransitionCategory.importantNotUrgent => 'Important, not urgent',
-    TransitionCategory.urgentNotImportant => 'Urgent, not important',
-    TransitionCategory.neither => 'Neither urgent nor important',
-  };
-}
-
-String _statusLabel(LogStatus status) {
-  return switch (status) {
-    LogStatus.active => 'Active',
-    LogStatus.paused => 'Paused',
-    LogStatus.completed => 'Completed',
-    LogStatus.abandoned => 'Abandoned',
+String _label(LogType type) {
+  return switch (type) {
+    LogType.stop => 'STOP',
+    LogType.start => 'START',
   };
 }
 
 String _formatDate(DateTime dateTime) {
+  final twoDigitMonth = dateTime.month.toString().padLeft(2, '0');
+  final twoDigitDay = dateTime.day.toString().padLeft(2, '0');
   final twoDigitHour = dateTime.hour.toString().padLeft(2, '0');
   final twoDigitMinute = dateTime.minute.toString().padLeft(2, '0');
-  return '$twoDigitHour:$twoDigitMinute';
+  return '${dateTime.year}-$twoDigitMonth-$twoDigitDay $twoDigitHour:$twoDigitMinute';
 }
 
 String _formatDuration(Duration duration) {
