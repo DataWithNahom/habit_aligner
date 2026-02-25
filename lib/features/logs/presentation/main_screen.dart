@@ -119,53 +119,51 @@ class _MainScreenState extends State<MainScreen> {
       appBar: AppBar(title: const Text('Behavioral Operating System')),
       body: controller.isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _ActivePanel(controller: controller),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: controller.activeLog == null
-                        ? () => _openStartSheet()
-                        : _openTransitionFlow,
-                    child: Text(
-                      controller.activeLog == null
-                          ? 'Start intentional action'
-                          : 'Resolve and transition',
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _ActivePanel(controller: controller),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: controller.activeLog == null
+                          ? () => _openStartSheet()
+                          : _openTransitionFlow,
+                      icon: const Icon(Icons.track_changes_rounded, size: 18),
+                      label: Text(
+                        controller.activeLog == null
+                            ? 'Start intentional action'
+                            : 'Resolve and transition',
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  _MetricsPanel(metrics: metrics),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Daily timeline',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: controller.todayTimeline.isEmpty
-                        ? const Center(
-                            child: Text('No timeline records for today.'),
-                          )
-                        : ListView.separated(
-                            itemCount: controller.todayTimeline.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 12),
-                            itemBuilder: (context, index) {
-                              final log = controller.todayTimeline[index];
-                              return ListTile(
-                                title: Text(log.label),
-                                subtitle: Text(
-                                  '${_formatDate(log.startedAt)} - ${log.endedAt == null ? 'Active' : _formatDate(log.endedAt!)} • ${_kindLabel(log.kind)}',
-                                ),
-                                trailing: Text(_statusLabel(log.status)),
-                              );
-                            },
-                          ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    _MetricsPanel(metrics: metrics),
+                    const SizedBox(height: 16),
+                    const _SectionHeader(
+                      title: 'Daily timeline',
+                      subtitle:
+                          'Chronological reconstruction of resolved states.',
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: controller.todayTimeline.isEmpty
+                          ? const Center(
+                              child: Text('No timeline records for today.'),
+                            )
+                          : ListView.separated(
+                              itemCount: controller.todayTimeline.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final log = controller.todayTimeline[index];
+                                return _TimelineTile(log: log);
+                              },
+                            ),
+                    ),
+                  ],
+                ),
               ),
             ),
     );
@@ -182,6 +180,10 @@ class _MainScreenState extends State<MainScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setStateModal) {
@@ -196,6 +198,11 @@ class _MainScreenState extends State<MainScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Text(
+                    'Define behavior state',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: labelController,
                     decoration: const InputDecoration(
@@ -288,6 +295,7 @@ class _MainScreenState extends State<MainScreen> {
                     Text('Current action: ${active.label}'),
                     const SizedBox(height: 12),
                     const Text('Resolve current action before switching:'),
+                    const SizedBox(height: 8),
                     SegmentedButton<String>(
                       segments: const [
                         ButtonSegment<String>(
@@ -309,10 +317,13 @@ class _MainScreenState extends State<MainScreen> {
                       },
                     ),
                     if (resolution == 'abandon')
-                      TextField(
-                        controller: abandonReasonController,
-                        decoration: const InputDecoration(
-                          labelText: 'Abandonment reason',
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: TextField(
+                          controller: abandonReasonController,
+                          decoration: const InputDecoration(
+                            labelText: 'Abandonment reason',
+                          ),
                         ),
                       ),
                     const SizedBox(height: 8),
@@ -374,6 +385,25 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 2),
+        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
 class _ActivePanel extends StatelessWidget {
   const _ActivePanel({required this.controller});
 
@@ -413,16 +443,47 @@ class _ActivePanel extends StatelessWidget {
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 6),
-            Text(active.label, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text('Started ${_formatDate(active.startedAt)}'),
-            Text('Expected ${active.expectedDurationMinutes} min'),
-            Text('Elapsed ${_formatDuration(controller.activeElapsed)}'),
-            if (active.parentId != null)
-              Text('Lineage link ${active.parentId}'),
+            Text(active.label, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _InfoChip(label: 'Started ${_formatDate(active.startedAt)}'),
+                _InfoChip(
+                  label: 'Expected ${active.expectedDurationMinutes} min',
+                ),
+                _InfoChip(
+                  label: 'Elapsed ${_formatDuration(controller.activeElapsed)}',
+                ),
+                if (active.parentId != null)
+                  _InfoChip(label: 'Lineage ${active.parentId}'),
+              ],
+            ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withAlpha(64),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
+      ),
+      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
     );
   }
 }
@@ -440,28 +501,119 @@ class _MetricsPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Daily analytics',
-              style: Theme.of(context).textTheme.titleMedium,
+            const _SectionHeader(
+              title: 'Daily analytics',
+              subtitle: 'Derived structural measures for today.',
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Planned vs actual accuracy: ${(metrics.plannedVsActualAccuracy * 100).toStringAsFixed(1)}%',
+            const SizedBox(height: 10),
+            _MetricRow(
+              label: 'Planned vs actual accuracy',
+              value:
+                  '${(metrics.plannedVsActualAccuracy * 100).toStringAsFixed(1)}%',
             ),
-            Text(
-              'Deviation frequency: ${(metrics.deviationFrequency * 100).toStringAsFixed(1)}%',
+            _MetricRow(
+              label: 'Deviation frequency',
+              value:
+                  '${(metrics.deviationFrequency * 100).toStringAsFixed(1)}%',
             ),
-            Text('Drift duration: ${_formatDuration(metrics.driftDuration)}'),
-            Text(
-              'Reaction ratio: ${(metrics.reactionRatio * 100).toStringAsFixed(1)}%',
+            _MetricRow(
+              label: 'Drift duration',
+              value: _formatDuration(metrics.driftDuration),
             ),
-            Text(
-              'Interruption density: ${(metrics.interruptionDensity * 100).toStringAsFixed(1)}%',
+            _MetricRow(
+              label: 'Reaction ratio',
+              value: '${(metrics.reactionRatio * 100).toStringAsFixed(1)}%',
+            ),
+            _MetricRow(
+              label: 'Interruption density',
+              value:
+                  '${(metrics.interruptionDensity * 100).toStringAsFixed(1)}%',
             ),
           ],
         ),
       ),
     );
+  }
+}
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          Text(value, style: Theme.of(context).textTheme.labelLarge),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineTile extends StatelessWidget {
+  const _TimelineTile({required this.log});
+
+  final LogEntry log;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.only(top: 6),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _statusColor(context, log.status),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    log.label,
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_formatDate(log.startedAt)} - ${log.endedAt == null ? 'Active' : _formatDate(log.endedAt!)} • ${_kindLabel(log.kind)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _statusLabel(log.status),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(BuildContext context, LogStatus status) {
+    return switch (status) {
+      LogStatus.active => Theme.of(context).colorScheme.primary,
+      LogStatus.paused => Colors.amber,
+      LogStatus.completed => Colors.greenAccent,
+      LogStatus.abandoned => Colors.redAccent,
+    };
   }
 }
 
