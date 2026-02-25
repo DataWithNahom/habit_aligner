@@ -24,12 +24,6 @@ class ActiveSessionController extends ChangeNotifier {
        _resumeUseCase = ResumeSessionUseCase(repository: repository, now: now),
        _notifications = notifications,
        _now = now {
-    LoggerService.instance.log(
-      level: LogLevel.info,
-      tag: FeatureTag.init,
-      event: 'ActiveSessionControllerConstructed',
-      message: 'ActiveSessionController created.',
-    );
     unawaited(_notifications.initialize());
   }
 
@@ -48,29 +42,13 @@ class ActiveSessionController extends ChangeNotifier {
   Duration get elapsed => _elapsed;
 
   Future<void> refresh() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'ActiveSessionRefresh',
-      tag: FeatureTag.system,
-      operation: () async {
-        final logs = await _repository.loadLogs();
-        _active = logs
-            .where((e) => e.isActive)
-            .cast<LogEntry?>()
-            .firstWhere((e) => e != null, orElse: () => null);
-        _syncTick();
-        LoggerService.instance.log(
-          level: LogLevel.info,
-          tag: FeatureTag.system,
-          event: 'ActiveSessionRefreshResult',
-          message: 'Refreshed active session state.',
-          context: {
-            'activeSessionId': _active?.id,
-            'elapsedMs': _elapsed.inMilliseconds,
-          },
-        );
-        notifyListeners();
-      },
-    );
+    final logs = await _repository.loadLogs();
+    _active = logs
+        .where((e) => e.isActive)
+        .cast<LogEntry?>()
+        .firstWhere((e) => e != null, orElse: () => null);
+    _syncTick();
+    notifyListeners();
   }
 
   Future<void> start({
@@ -79,136 +57,72 @@ class ActiveSessionController extends ChangeNotifier {
     required int expectedDurationMinutes,
     TransitionCategory? transitionCategory,
     String? parentId,
+    List<String> tags = const <String>[],
+    String? experimentId,
   }) async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'ActiveSessionStart',
-      tag: FeatureTag.userAction,
-      context: {
-        'label': label,
-        'kind': kind.name,
-        'expectedDurationMinutes': expectedDurationMinutes,
-        'transitionCategory': transitionCategory?.name,
-        'parentId': parentId,
-      },
-      operation: () async {
-        final created = await _startUseCase(
-          label: label,
-          kind: kind,
-          expectedDurationMinutes: expectedDurationMinutes,
-          transitionCategory: transitionCategory,
-          parentId: parentId,
-        );
-        if (created != null) {
-          await _notifications.scheduleHalfAlert(
-            created.id,
-            created.startedAt.add(
-              Duration(minutes: (created.expectedDurationMinutes / 2).ceil()),
-            ),
-          );
-          await _notifications.schedulePlannedAlert(
-            created.id,
-            created.startedAt.add(created.expectedDuration),
-          );
-        }
-        await refresh();
-      },
+    final created = await _startUseCase(
+      label: label,
+      kind: kind,
+      expectedDurationMinutes: expectedDurationMinutes,
+      transitionCategory: transitionCategory,
+      parentId: parentId,
+      tags: tags,
+      experimentId: experimentId,
     );
+    if (created != null) {
+      await _notifications.scheduleHalfAlert(
+        created.id,
+        created.startedAt.add(
+          Duration(minutes: (created.expectedDurationMinutes / 2).ceil()),
+        ),
+      );
+      await _notifications.schedulePlannedAlert(
+        created.id,
+        created.startedAt.add(created.expectedDuration),
+      );
+    }
+    await refresh();
   }
 
   Future<LogEntry?> resolve(LogStatus status, {String? reason}) async {
-    return LoggerService.instance.traceAsync<LogEntry?>(
-      event: 'ActiveSessionResolve',
-      tag: FeatureTag.userAction,
-      context: {'status': status.name, 'reason': reason},
-      operation: () async {
-        final resolved = await _resolveUseCase(
-          resolution: status,
-          reason: reason,
-        );
-        if (resolved != null) {
-          await _notifications.cancelSessionNotifications(resolved.id);
-        }
-        await refresh();
-        return resolved;
-      },
-    );
+    final resolved = await _resolveUseCase(resolution: status, reason: reason);
+    if (resolved != null) {
+      await _notifications.cancelSessionNotifications(resolved.id);
+    }
+    await refresh();
+    return resolved;
   }
 
-  Future<LogEntry?> resume(String pausedSessionId) {
-    return LoggerService.instance.traceAsync<LogEntry?>(
-      event: 'ActiveSessionResume',
-      tag: FeatureTag.userAction,
-      context: {'pausedSessionId': pausedSessionId},
-      operation: () async {
-        final resumed = await _resumeUseCase(pausedSessionId);
-        if (resumed != null) {
-          await _notifications.scheduleHalfAlert(
-            resumed.id,
-            resumed.startedAt.add(
-              Duration(minutes: (resumed.expectedDurationMinutes / 2).ceil()),
-            ),
-          );
-          await _notifications.schedulePlannedAlert(
-            resumed.id,
-            resumed.startedAt.add(resumed.expectedDuration),
-          );
-        }
-        await refresh();
-        return resumed;
-      },
-    );
+  Future<LogEntry?> resume(String pausedSessionId) async {
+    final resumed = await _resumeUseCase(pausedSessionId);
+    if (resumed != null) {
+      await _notifications.scheduleHalfAlert(
+        resumed.id,
+        resumed.startedAt.add(
+          Duration(minutes: (resumed.expectedDurationMinutes / 2).ceil()),
+        ),
+      );
+      await _notifications.schedulePlannedAlert(
+        resumed.id,
+        resumed.startedAt.add(resumed.expectedDuration),
+      );
+    }
+    await refresh();
+    return resumed;
   }
 
   Future<void> markHalfShown() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'MarkHalfAlertShown',
-      tag: FeatureTag.notification,
-      operation: () async {
-        final s = _active;
-        if (s == null || s.halfAlertShown) {
-          LoggerService.instance.log(
-            level: LogLevel.debug,
-            tag: FeatureTag.notification,
-            event: 'MarkHalfAlertShownSkipped',
-            message:
-                'Half alert mark skipped due to missing/already-marked session.',
-            context: {
-              'activeSessionId': s?.id,
-              'alreadyShown': s?.halfAlertShown,
-            },
-          );
-          return;
-        }
-        await _repository.upsertLog(s.copyWith(halfAlertShown: true));
-        await refresh();
-      },
-    );
+    final s = _active;
+    if (s == null || s.halfAlertShown) return;
+    await _repository.upsertLog(s.copyWith(halfAlertShown: true));
+    await refresh();
   }
 
   Future<void> markPlannedShown() async {
-    await LoggerService.instance.traceAsync<void>(
-      event: 'MarkPlannedAlertShown',
-      tag: FeatureTag.notification,
-      operation: () async {
-        final s = _active;
-        if (s == null || s.plannedAlertShown) {
-          LoggerService.instance.log(
-            level: LogLevel.debug,
-            tag: FeatureTag.notification,
-            event: 'MarkPlannedAlertShownSkipped',
-            message:
-                'Planned alert mark skipped due to missing/already-marked session.',
-            context: {
-              'activeSessionId': s?.id,
-              'alreadyShown': s?.plannedAlertShown,
-            },
-          );
-          return;
-        }
-        await _repository.upsertLog(s.copyWith(plannedAlertShown: true));
-        await refresh();
-      },
-    );
+    final s = _active;
+    if (s == null || s.plannedAlertShown) return;
+    await _repository.upsertLog(s.copyWith(plannedAlertShown: true));
+    await refresh();
   }
 
   bool get halfAlertDue {
@@ -217,33 +131,13 @@ class ActiveSessionController extends ChangeNotifier {
     final at = s.startedAt.add(
       Duration(minutes: (s.expectedDurationMinutes / 2).ceil()),
     );
-    final due = !_now().isBefore(at);
-    if (due) {
-      LoggerService.instance.log(
-        level: LogLevel.info,
-        tag: FeatureTag.notification,
-        event: 'HalfAlertDue',
-        message: 'Half alert is due for active session.',
-        context: {'sessionId': s.id, 'dueAt': at.toIso8601String()},
-      );
-    }
-    return due;
+    return !_now().isBefore(at);
   }
 
   bool get plannedAlertDue {
     final s = _active;
     if (s == null || s.plannedAlertShown) return false;
-    final due = !_now().isBefore(s.startedAt.add(s.expectedDuration));
-    if (due) {
-      LoggerService.instance.log(
-        level: LogLevel.info,
-        tag: FeatureTag.notification,
-        event: 'PlannedAlertDue',
-        message: 'Planned alert is due for active session.',
-        context: {'sessionId': s.id},
-      );
-    }
-    return due;
+    return !_now().isBefore(s.startedAt.add(s.expectedDuration));
   }
 
   void _syncTick() {
@@ -251,12 +145,6 @@ class ActiveSessionController extends ChangeNotifier {
     final s = _active;
     if (s == null) {
       _elapsed = Duration.zero;
-      LoggerService.instance.log(
-        level: LogLevel.debug,
-        tag: FeatureTag.system,
-        event: 'ActiveTickStopped',
-        message: 'No active session; elapsed timer reset.',
-      );
       return;
     }
     _elapsed = _now().difference(s.startedAt);
@@ -264,13 +152,6 @@ class ActiveSessionController extends ChangeNotifier {
       _elapsed = _now().difference(s.startedAt);
       notifyListeners();
     });
-    LoggerService.instance.log(
-      level: LogLevel.debug,
-      tag: FeatureTag.system,
-      event: 'ActiveTickStarted',
-      message: 'Active session timer synchronized.',
-      context: {'sessionId': s.id, 'elapsedMs': _elapsed.inMilliseconds},
-    );
   }
 
   @override
@@ -280,7 +161,7 @@ class ActiveSessionController extends ChangeNotifier {
       level: LogLevel.info,
       tag: FeatureTag.lifecycle,
       event: 'ActiveSessionControllerDispose',
-      message: 'ActiveSessionController disposed and timer canceled.',
+      message: 'ActiveSessionController disposed and timer cancelled.',
     );
     super.dispose();
   }

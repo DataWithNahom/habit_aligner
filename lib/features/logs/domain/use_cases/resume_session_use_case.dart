@@ -29,6 +29,8 @@ class ResumeSessionUseCase {
       schemaVersion: paused.schemaVersion,
       parentId: paused.id,
       transitionCategory: paused.transitionCategory,
+      tags: paused.tags,
+      experimentId: paused.experimentId,
     );
 
     await _repository.upsertLog(resumed);
