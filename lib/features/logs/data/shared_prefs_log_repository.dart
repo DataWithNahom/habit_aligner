@@ -10,7 +10,17 @@ class SharedPrefsLogRepository implements LogRepository {
   Future<List<LogEntry>> loadLogs() async {
     final prefs = await SharedPreferences.getInstance();
     final rawLogs = prefs.getStringList(_storageKey) ?? <String>[];
-    return rawLogs.map(LogEntry.fromJson).toList();
+
+    final parsed = <LogEntry>[];
+    for (final raw in rawLogs) {
+      try {
+        parsed.add(LogEntry.fromJson(raw));
+      } catch (_) {
+        // Skip malformed legacy rows rather than crashing startup.
+      }
+    }
+
+    return parsed;
   }
 
   @override
