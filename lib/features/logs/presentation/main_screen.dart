@@ -8,9 +8,14 @@ import '../domain/log_entry.dart';
 import 'log_controller.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key, required this.controller});
+  const MainScreen({
+    super.key,
+    required this.controller,
+    this.disposeController = false,
+  });
 
   final LogController controller;
+  final bool disposeController;
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -27,7 +32,9 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     widget.controller.removeListener(_onChanged);
-    widget.controller.dispose();
+    if (widget.disposeController) {
+      widget.controller.dispose();
+    }
     super.dispose();
   }
 
@@ -89,6 +96,7 @@ class _MainScreenState extends State<MainScreen> {
                     _QuickActions(
                       controller: controller,
                       onRequestStart: () => _openStartSheet(),
+                      onPauseOrResumePressed: _handlePauseOrResume,
                     ),
 
                     if (controller.resumablePausedLogs.isNotEmpty) ...[
@@ -228,16 +236,20 @@ class _MainScreenState extends State<MainScreen> {
                       spacing: 8,
                       children: [
                         OutlinedButton(
-                          onPressed: controller.exportJson,
+                          onPressed: _handleExportJson,
                           child: const Text('Export JSON'),
                         ),
                         OutlinedButton(
-                          onPressed: controller.exportCsv,
+                          onPressed: _handleExportCsv,
                           child: const Text('Export CSV'),
                         ),
                         OutlinedButton(
-                          onPressed: controller.createBackup,
+                          onPressed: _handleCreateBackup,
                           child: const Text('Create backup'),
+                        ),
+                        OutlinedButton(
+                          onPressed: _handleIntegrityCheck,
+                          child: const Text('Run integrity check'),
                         ),
                       ],
                     ),
@@ -291,6 +303,66 @@ class _MainScreenState extends State<MainScreen> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _handlePauseOrResume() async {
+    final active = widget.controller.activeLog;
+    if (active != null) {
+      await _handlePauseAction();
+      return;
+    }
+
+    final paused = widget.controller.resumablePausedLogs;
+    if (paused.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No paused session available to resume.')),
+      );
+      return;
+    }
+    await widget.controller.resumePausedLog(paused.first.id);
+  }
+
+  Future<void> _handleExportJson() async {
+    await widget.controller.exportJson();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('JSON export saved to app documents folder.'),
+      ),
+    );
+  }
+
+  Future<void> _handleExportCsv() async {
+    await widget.controller.exportCsv();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('CSV export saved to app documents folder.'),
+      ),
+    );
+  }
+
+  Future<void> _handleCreateBackup() async {
+    await widget.controller.createBackup();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Backup snapshot created.')));
+  }
+
+  Future<void> _handleIntegrityCheck() async {
+    final result = await widget.controller.runIntegrityCheck();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result
+              ? 'Integrity check passed. Data is consistent.'
+              : 'Integrity check found issues. Please review logs.',
+        ),
+      ),
     );
   }
 
@@ -428,10 +500,15 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.controller, required this.onRequestStart});
+  const _QuickActions({
+    required this.controller,
+    required this.onRequestStart,
+    required this.onPauseOrResumePressed,
+  });
 
   final LogController controller;
   final Future<void> Function() onRequestStart;
+  final Future<void> Function() onPauseOrResumePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -444,10 +521,9 @@ class _QuickActions extends StatelessWidget {
       children: [
         FilledButton.icon(
           onPressed: controller.activeLog != null
-              ? () => (context.findAncestorStateOfType<_MainScreenState>())
-                    ?._handlePauseAction()
+              ? onPauseOrResumePressed
               : mostRecentPaused != null
-              ? () => controller.resumePausedLog(mostRecentPaused.id)
+              ? onPauseOrResumePressed
               : null,
           icon: Icon(
             controller.activeLog != null ? Icons.pause : Icons.play_arrow,
