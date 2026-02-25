@@ -9,12 +9,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'support_test_helpers.dart';
 
 void main() {
+  setUpAll(() => logSuiteStart('log_controller_initialization_test'));
+  tearDownAll(() => logSuiteEnd('log_controller_initialization_test'));
+  setUp(logTestStart);
+  tearDown(logTestEnd);
+
   group('controller initialization and loading', () {
     test('empty storage initializes safely', () async {
       final repository = InMemoryLogRepository();
       final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+        repository: repository,
+      );
 
       expect(controller.logs, isEmpty);
       expect(controller.activeLog, isNull);
@@ -34,7 +44,12 @@ void main() {
       ]);
       final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+        repository: repository,
+      );
 
       expect(controller.logs, hasLength(1));
       expect(controller.todayTimeline, hasLength(1));
@@ -62,7 +77,11 @@ void main() {
       final repository = SharedPrefsLogRepository();
       final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+      );
 
       expect(controller.logs, hasLength(1));
       expect(controller.logs.first.id, 'ok-1');
@@ -74,7 +93,11 @@ void main() {
       });
       final controller = LogController(repository: SharedPrefsLogRepository());
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+      );
 
       expect(controller.logs, isEmpty);
       expect(controller.todayMetrics.interruptionDensity, 0);
@@ -100,7 +123,11 @@ void main() {
           repository: SharedPrefsLogRepository(),
         );
 
-        await controller.initialize();
+        await runLoggedControllerAction(
+          action: 'initialize',
+          operation: controller.initialize,
+          controller: controller,
+        );
 
         expect(controller.logs.single.kind, BehaviorKind.correctiveStop);
         expect(controller.logs.single.status, LogStatus.completed);
@@ -110,22 +137,26 @@ void main() {
 
     test('multiple active logs only expose one activeLog', () async {
       final now = DateTime.now();
-      final controller = LogController(
-        repository: InMemoryLogRepository([
-          buildLog(
-            id: 'active-1',
-            startedAt: now.subtract(const Duration(minutes: 10)),
-            status: LogStatus.active,
-          ),
-          buildLog(
-            id: 'active-2',
-            startedAt: now.subtract(const Duration(minutes: 5)),
-            status: LogStatus.active,
-          ),
-        ]),
-      );
+      final repository = InMemoryLogRepository([
+        buildLog(
+          id: 'active-1',
+          startedAt: now.subtract(const Duration(minutes: 10)),
+          status: LogStatus.active,
+        ),
+        buildLog(
+          id: 'active-2',
+          startedAt: now.subtract(const Duration(minutes: 5)),
+          status: LogStatus.active,
+        ),
+      ]);
+      final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+        repository: repository,
+      );
 
       expect(controller.activeLog, isNotNull);
       expect(controller.logs.where((item) => item.isActive), hasLength(2));
@@ -133,17 +164,17 @@ void main() {
 
     test('handles active log without end time and computes elapsed', () async {
       final startedAt = DateTime.now().subtract(const Duration(seconds: 3));
-      final controller = LogController(
-        repository: InMemoryLogRepository([
-          buildLog(
-            id: 'running',
-            startedAt: startedAt,
-            status: LogStatus.active,
-          ),
-        ]),
-      );
+      final repository = InMemoryLogRepository([
+        buildLog(id: 'running', startedAt: startedAt, status: LogStatus.active),
+      ]);
+      final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+        repository: repository,
+      );
 
       expect(controller.activeLog, isNotNull);
       expect(
@@ -179,11 +210,15 @@ void main() {
           endedAt: started.add(const Duration(minutes: 5)),
         );
       });
-      final controller = LogController(
-        repository: InMemoryLogRepository(entries),
-      );
+      final repository = InMemoryLogRepository(entries);
+      final controller = LogController(repository: repository);
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+        repository: repository,
+      );
 
       expect(controller.logs.length, 2000);
       final timeline = controller.todayTimeline;
@@ -201,22 +236,26 @@ void main() {
       () async {
         final now = DateTime.now();
         final yesterday = now.subtract(const Duration(days: 1));
-        final controller = LogController(
-          repository: InMemoryLogRepository([
-            buildLog(
-              id: 'today',
-              startedAt: now.subtract(const Duration(hours: 2)),
-              endedAt: now.subtract(const Duration(hours: 1)),
-            ),
-            buildLog(
-              id: 'yesterday',
-              startedAt: yesterday,
-              endedAt: yesterday.add(const Duration(minutes: 10)),
-            ),
-          ]),
-        );
+        final repository = InMemoryLogRepository([
+          buildLog(
+            id: 'today',
+            startedAt: now.subtract(const Duration(hours: 2)),
+            endedAt: now.subtract(const Duration(hours: 1)),
+          ),
+          buildLog(
+            id: 'yesterday',
+            startedAt: yesterday,
+            endedAt: yesterday.add(const Duration(minutes: 10)),
+          ),
+        ]);
+        final controller = LogController(repository: repository);
 
-        await controller.initialize();
+        await runLoggedControllerAction(
+          action: 'initialize',
+          operation: controller.initialize,
+          controller: controller,
+          repository: repository,
+        );
 
         expect(
           controller.todayTimeline.map((item) => item.id),

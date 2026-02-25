@@ -1,11 +1,18 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support_test_helpers.dart';
 import 'package:habit_aligner/features/logs/domain/log_entry.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:habit_aligner/features/logs/data/shared_prefs_log_repository.dart';
 
 void main() {
+  setUpAll(() => logSuiteStart('log_entry_test'));
+  tearDownAll(() => logSuiteEnd('log_entry_test'));
+  setUp(logTestStart);
+  tearDown(logTestEnd);
+
   test('parses legacy log schema without crashing', () {
     final legacyMap = <String, dynamic>{
       'id': 'legacy-1',
