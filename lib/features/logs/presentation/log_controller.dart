@@ -68,6 +68,10 @@ class LogController extends ChangeNotifier {
 
   List<LogEntry> _logs = <LogEntry>[];
   List<LogEntry> get logs => List.unmodifiable(_logs);
+  List<LogEntry> get resumablePausedLogs => List.unmodifiable(
+    _logs.where((entry) => entry.status == LogStatus.paused).toList()
+      ..sort((a, b) => b.startedAt.compareTo(a.startedAt)),
+  );
   LogEntry? get activeLog => _active.active;
   Duration get activeElapsed => _active.elapsed;
   bool get halfTimeAlertDue => _alerts.halfDue;
@@ -163,6 +167,18 @@ class LogController extends ChangeNotifier {
       context: {'reason': reason},
       operation: () async {
         await _active.resolve(LogStatus.abandoned, reason: reason);
+        await _refreshAll(forceMetrics: true);
+      },
+    );
+  }
+
+  Future<void> resumePausedLog(String pausedSessionId) async {
+    await LoggerService.instance.traceAsync<void>(
+      event: 'ResumePausedLogAction',
+      tag: FeatureTag.userAction,
+      context: {'pausedSessionId': pausedSessionId},
+      operation: () async {
+        await _active.resume(pausedSessionId);
         await _refreshAll(forceMetrics: true);
       },
     );

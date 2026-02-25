@@ -15,6 +15,8 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   bool _handlingDialog = false;
+  bool _isResolvingTransition = false;
+  String? _transitionValidationError;
 
   @override
   void initState() {
@@ -189,7 +191,12 @@ class _MainScreenState extends State<MainScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _ActivePanel(controller: controller),
+                      _ActivePanel(
+                        controller: controller,
+                        onResumePaused: (id) async {
+                          await controller.resumePausedLog(id);
+                        },
+                      ),
                       const SizedBox(height: 12),
                       FilledButton.icon(
                         onPressed: controller.activeLog == null
@@ -443,6 +450,8 @@ class _MainScreenState extends State<MainScreen> {
 
     TransitionCategory selectedCategory = TransitionCategory.importantNotUrgent;
     String resolution = 'pause';
+    _isResolvingTransition = false;
+    _transitionValidationError = null;
     final abandonReasonController = TextEditingController();
 
     await showDialog<void>(
@@ -487,7 +496,10 @@ class _MainScreenState extends State<MainScreen> {
                               'User changed transition resolution selection.',
                           context: {'resolution': selection.first},
                         );
-                        setDialogState(() => resolution = selection.first);
+                        setDialogState(() {
+                          resolution = selection.first;
+                          _transitionValidationError = null;
+                        });
                       },
                     ),
                     if (resolution == 'abandon')
@@ -527,54 +539,96 @@ class _MainScreenState extends State<MainScreen> {
                         labelText: 'Reason for switching',
                       ),
                     ),
+                    if (_transitionValidationError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          _transitionValidationError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    LoggerService.instance.log(
-                      level: LogLevel.info,
-                      tag: FeatureTag.userAction,
-                      event: 'TransitionDialogCancelTapped',
-                      message: 'User canceled transition dialog.',
-                    );
-                    Navigator.of(context).pop();
-                  },
+                  onPressed: _isResolvingTransition
+                      ? null
+                      : () {
+                          LoggerService.instance.log(
+                            level: LogLevel.info,
+                            tag: FeatureTag.userAction,
+                            event: 'TransitionDialogCancelTapped',
+                            message: 'User canceled transition dialog.',
+                          );
+                          Navigator.of(context).pop();
+                        },
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () async {
-                    LoggerService.instance.log(
-                      level: LogLevel.info,
-                      tag: FeatureTag.userAction,
-                      event: 'TransitionResolveTapped',
-                      message: 'User confirmed transition resolution.',
-                      context: {
-                        'resolution': resolution,
-                        'category': selectedCategory.name,
-                      },
-                    );
-                    if (resolution == 'complete') {
-                      await widget.controller.completeActiveLog();
-                    } else if (resolution == 'pause') {
-                      await widget.controller.pauseActiveLog();
-                    } else {
-                      final reason = abandonReasonController.text.trim();
-                      if (reason.isEmpty) return;
-                      await widget.controller.abandonActiveLog(reason);
-                    }
+                  onPressed: _isResolvingTransition
+                      ? null
+                      : () async {
+                          LoggerService.instance.log(
+                            level: LogLevel.info,
+                            tag: FeatureTag.userAction,
+                            event: 'TransitionResolveTapped',
+                            message: 'User confirmed transition resolution.',
+                            context: {
+                              'resolution': resolution,
+                              'category': selectedCategory.name,
+                            },
+                          );
+                          if (resolution == 'abandon') {
+                            final reason = abandonReasonController.text.trim();
+                            if (reason.isEmpty) {
+                              setDialogState(() {
+                                _transitionValidationError =
+                                    'Abandonment reason is required.';
+                              });
+                              return;
+                            }
+                          }
 
-                    if (context.mounted) {
-                      Navigator.of(context).pop();
-                    }
+                          setDialogState(() {
+                            _isResolvingTransition = true;
+                            _transitionValidationError = null;
+                          });
 
-                    await _openStartSheet(
-                      parentId: active.id,
-                      transitionCategory: selectedCategory,
-                    );
-                  },
-                  child: const Text('Resolve and continue'),
+                          try {
+                            if (resolution == 'complete') {
+                              await widget.controller.completeActiveLog();
+                            } else if (resolution == 'pause') {
+                              await widget.controller.pauseActiveLog();
+                            } else {
+                              final reason = abandonReasonController.text
+                                  .trim();
+                              await widget.controller.abandonActiveLog(reason);
+                            }
+
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+
+                            await _openStartSheet(
+                              parentId: active.id,
+                              transitionCategory: selectedCategory,
+                            );
+                          } finally {
+                            if (mounted) {
+                              setState(() {
+                                _isResolvingTransition = false;
+                              });
+                            }
+                          }
+                        },
+                  child: Text(
+                    _isResolvingTransition
+                        ? 'Resolving...'
+                        : 'Resolve and continue',
+                  ),
                 ),
               ],
             );
@@ -605,15 +659,17 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _ActivePanel extends StatelessWidget {
-  const _ActivePanel({required this.controller});
+  const _ActivePanel({required this.controller, required this.onResumePaused});
 
   final LogController controller;
+  final Future<void> Function(String pausedSessionId) onResumePaused;
 
   @override
   Widget build(BuildContext context) {
     final active = controller.activeLog;
 
     if (active == null) {
+      final pausedLogs = controller.resumablePausedLogs.take(3).toList();
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -626,6 +682,35 @@ class _ActivePanel extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               const Text('Define the next intentional action to assign time.'),
+              if (pausedLogs.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Resume paused tasks',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: 8),
+                ...pausedLogs.map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${entry.label} • expected ${entry.expectedDurationMinutes}m',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () => onResumePaused(entry.id),
+                          child: const Text('Resume'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
