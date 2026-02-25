@@ -6,6 +6,7 @@ import '../../../../core/logging/logger_service.dart';
 import '../../data/log_repository.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/services/notification_scheduler.dart';
+import '../../domain/use_cases/resume_session_use_case.dart';
 import '../../domain/use_cases/resolve_session_use_case.dart';
 import '../../domain/use_cases/start_session_use_case.dart';
 
@@ -20,6 +21,7 @@ class ActiveSessionController extends ChangeNotifier {
          repository: repository,
          now: now,
        ),
+       _resumeUseCase = ResumeSessionUseCase(repository: repository, now: now),
        _notifications = notifications,
        _now = now {
     LoggerService.instance.log(
@@ -34,6 +36,7 @@ class ActiveSessionController extends ChangeNotifier {
   final LogRepository _repository;
   final StartSessionUseCase _startUseCase;
   final ResolveSessionUseCase _resolveUseCase;
+  final ResumeSessionUseCase _resumeUseCase;
   final NotificationScheduler _notifications;
   final DateTime Function() _now;
 
@@ -127,6 +130,31 @@ class ActiveSessionController extends ChangeNotifier {
         }
         await refresh();
         return resolved;
+      },
+    );
+  }
+
+  Future<LogEntry?> resume(String pausedSessionId) {
+    return LoggerService.instance.traceAsync<LogEntry?>(
+      event: 'ActiveSessionResume',
+      tag: FeatureTag.userAction,
+      context: {'pausedSessionId': pausedSessionId},
+      operation: () async {
+        final resumed = await _resumeUseCase(pausedSessionId);
+        if (resumed != null) {
+          await _notifications.scheduleHalfAlert(
+            resumed.id,
+            resumed.startedAt.add(
+              Duration(minutes: (resumed.expectedDurationMinutes / 2).ceil()),
+            ),
+          );
+          await _notifications.schedulePlannedAlert(
+            resumed.id,
+            resumed.startedAt.add(resumed.expectedDuration),
+          );
+        }
+        await refresh();
+        return resumed;
       },
     );
   }
