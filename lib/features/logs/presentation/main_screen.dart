@@ -39,6 +39,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final metrics = controller.todayMetrics;
+    final activeLog = controller.activeLog;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Behavioral Operating System')),
@@ -61,18 +62,23 @@ class _MainScreenState extends State<MainScreen> {
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 260),
                       child: SessionStateCard(
-                        key: ValueKey(controller.activeLog?.id ?? 'idle'),
-                        title:
-                            controller.activeLog?.label ?? 'No active session',
-                        subtitle: controller.activeLog == null
-                            ? 'Start an intentional block to begin.'
-                            : 'Elapsed ${controller.activeElapsed.inMinutes} min',
-                        trailing: controller.activeLog != null
+                        key: ValueKey(activeLog?.id ?? 'idle'),
+                        title: activeLog?.label ?? 'Idle',
+                        subtitle: activeLog == null
+                            ? 'No active session at this moment.'
+                            : 'Elapsed ${_formatDuration(controller.activeElapsed)}',
+                        trailing: activeLog != null
                             ? IconButton(
                                 tooltip: 'Complete current session',
                                 onPressed: () async {
                                   HapticFeedback.mediumImpact();
                                   await controller.completeActiveLog();
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Session completed.'),
+                                    ),
+                                  );
                                 },
                                 icon: const Icon(Icons.check_circle_outline),
                               )
@@ -80,7 +86,41 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _QuickActions(controller: controller),
+                    _QuickActions(
+                      controller: controller,
+                      onRequestStart: () => _openStartSheet(),
+                    ),
+
+                    if (controller.resumablePausedLogs.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      CTASection(
+                        title: 'Paused sessions',
+                        subtitle:
+                            'Resumable tasks from your actual session history.',
+                        child: Column(
+                          children: [
+                            for (final paused in controller.resumablePausedLogs)
+                              ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(paused.label),
+                                subtitle: Text(
+                                  paused.abandonmentReason?.trim().isNotEmpty ==
+                                          true
+                                      ? 'Reason: ${paused.abandonmentReason}'
+                                      : 'No pause reason recorded',
+                                ),
+                                trailing: IconButton(
+                                  tooltip: 'Resume',
+                                  onPressed: () =>
+                                      controller.resumePausedLog(paused.id),
+                                  icon: const Icon(Icons.play_arrow),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
 
                     const SizedBox(height: 20),
                     const Text(
@@ -105,14 +145,17 @@ class _MainScreenState extends State<MainScreen> {
                               label: const Text('Regenerate plan'),
                             ),
                           ),
+                          if (controller.dailyPlan.isEmpty)
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('No plan generated yet.'),
+                            ),
                           ...controller.dailyPlan.map(
                             (block) => _PlanTile(block: block),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _TemplateRow(controller: controller),
 
                     const SizedBox(height: 20),
                     const Text(
@@ -207,6 +250,85 @@ class _MainScreenState extends State<MainScreen> {
         label: const Text('Start'),
         icon: const Icon(Icons.play_arrow),
       ),
+    );
+  }
+
+  String _formatDuration(Duration value) {
+    final safe = value.isNegative ? Duration.zero : value;
+    final hours = safe.inHours.toString().padLeft(2, '0');
+    final minutes = (safe.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (safe.inSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
+
+  Future<void> _handlePauseAction() async {
+    final paused = await widget.controller.pauseActiveLog();
+    if (!mounted || paused == null) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.playlist_add),
+                title: const Text('Start a new task now'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _openStartSheet();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_note),
+                title: const Text('Provide a pause reason'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await _promptPauseReason(paused.id);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _promptPauseReason(String pausedSessionId) async {
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pause reason'),
+        content: TextField(
+          controller: reasonController,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'What caused this pause?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Skip'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = reasonController.text.trim();
+              if (value.isEmpty) return;
+              Navigator.pop(context, value);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || reason == null) return;
+    await widget.controller.annotatePausedLog(
+      pausedSessionId: pausedSessionId,
+      reason: reason,
     );
   }
 
@@ -306,22 +428,31 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.controller});
+  const _QuickActions({required this.controller, required this.onRequestStart});
 
   final LogController controller;
+  final Future<void> Function() onRequestStart;
 
   @override
   Widget build(BuildContext context) {
+    final pausedLogs = controller.resumablePausedLogs;
+    final mostRecentPaused = pausedLogs.isEmpty ? null : pausedLogs.first;
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
         FilledButton.icon(
-          onPressed: controller.activeLog == null
-              ? null
-              : controller.pauseActiveLog,
-          icon: const Icon(Icons.pause),
-          label: const Text('Pause'),
+          onPressed: controller.activeLog != null
+              ? () => (context.findAncestorStateOfType<_MainScreenState>())
+                    ?._handlePauseAction()
+              : mostRecentPaused != null
+              ? () => controller.resumePausedLog(mostRecentPaused.id)
+              : null,
+          icon: Icon(
+            controller.activeLog != null ? Icons.pause : Icons.play_arrow,
+          ),
+          label: Text(controller.activeLog != null ? 'Pause' : 'Resume'),
         ),
         FilledButton.icon(
           onPressed: controller.activeLog == null
@@ -337,38 +468,12 @@ class _QuickActions extends StatelessWidget {
           icon: const Icon(Icons.close),
           label: const Text('Abandon'),
         ),
+        OutlinedButton.icon(
+          onPressed: onRequestStart,
+          icon: const Icon(Icons.add),
+          label: const Text('New task'),
+        ),
       ],
-    );
-  }
-}
-
-class _TemplateRow extends StatelessWidget {
-  const _TemplateRow({required this.controller});
-
-  final LogController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final templates = [
-      ('Deep Work 45', 45),
-      ('Admin Sweep 20', 20),
-      ('Recovery Break 10', 10),
-    ];
-    return CTASection(
-      title: 'Session templates',
-      subtitle: 'One-thumb quick start templates.',
-      child: Wrap(
-        spacing: 8,
-        children: [
-          for (final t in templates)
-            ActionChip(
-              label: Text(t.$1),
-              onPressed: () =>
-                  (context.findAncestorStateOfType<_MainScreenState>())
-                      ?._openStartSheet(presetLabel: t.$1, presetMins: t.$2),
-            ),
-        ],
-      ),
     );
   }
 }

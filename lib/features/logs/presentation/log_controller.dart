@@ -146,9 +146,10 @@ class LogController extends ChangeNotifier {
     await _refreshAll(forceMetrics: true);
   }
 
-  Future<void> pauseActiveLog() async {
-    await _active.resolve(LogStatus.paused);
+  Future<LogEntry?> pauseActiveLog({String? reason}) async {
+    final paused = await _active.resolve(LogStatus.paused, reason: reason);
     await _refreshAll(forceMetrics: true);
+    return paused;
   }
 
   Future<void> abandonActiveLog(String reason) async {
@@ -158,6 +159,25 @@ class LogController extends ChangeNotifier {
 
   Future<void> resumePausedLog(String pausedSessionId) async {
     await _active.resume(pausedSessionId);
+    await _refreshAll(forceMetrics: true);
+  }
+
+  Future<void> annotatePausedLog({
+    required String pausedSessionId,
+    required String reason,
+  }) async {
+    final normalizedReason = reason.trim();
+    if (normalizedReason.isEmpty) return;
+    final paused = _logs
+        .where((entry) => entry.id == pausedSessionId)
+        .where((entry) => entry.status == LogStatus.paused)
+        .cast<LogEntry?>()
+        .firstWhere((entry) => entry != null, orElse: () => null);
+    if (paused == null) return;
+
+    await _repository.upsertLog(
+      paused.copyWith(abandonmentReason: normalizedReason),
+    );
     await _refreshAll(forceMetrics: true);
   }
 
