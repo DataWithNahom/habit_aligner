@@ -19,10 +19,13 @@ class LogEntry {
     required this.startedAt,
     required this.expectedDurationMinutes,
     required this.status,
+    required this.schemaVersion,
     this.endedAt,
     this.parentId,
     this.transitionCategory,
     this.abandonmentReason,
+    this.halfAlertShown = false,
+    this.plannedAlertShown = false,
   });
 
   final String id;
@@ -31,52 +34,64 @@ class LogEntry {
   final DateTime startedAt;
   final int expectedDurationMinutes;
   final LogStatus status;
+  final int schemaVersion;
   final DateTime? endedAt;
   final String? parentId;
   final TransitionCategory? transitionCategory;
   final String? abandonmentReason;
+  final bool halfAlertShown;
+  final bool plannedAlertShown;
 
   Duration get expectedDuration => Duration(minutes: expectedDurationMinutes);
 
   Duration get actualDuration {
     final end = endedAt ?? DateTime.now();
-    return end.difference(startedAt);
+    final diff = end.difference(startedAt);
+    return diff.isNegative ? Duration.zero : diff;
   }
 
   bool get isActive => status == LogStatus.active;
 
-  LogEntry complete(DateTime completedAt) {
-    return _copyWith(status: LogStatus.completed, endedAt: completedAt);
-  }
-
-  LogEntry pause(DateTime pausedAt) {
-    return _copyWith(status: LogStatus.paused, endedAt: pausedAt);
-  }
-
-  LogEntry abandon(DateTime abandonedAt, String reason) {
-    return _copyWith(
-      status: LogStatus.abandoned,
-      endedAt: abandonedAt,
-      abandonmentReason: reason,
-    );
-  }
-
-  LogEntry _copyWith({
+  LogEntry copyWith({
     LogStatus? status,
     DateTime? endedAt,
     String? abandonmentReason,
+    bool? halfAlertShown,
+    bool? plannedAlertShown,
+    String? id,
+    String? parentId,
+    bool clearParentId = false,
   }) {
     return LogEntry(
-      id: id,
+      id: id ?? this.id,
       label: label,
       kind: kind,
       startedAt: startedAt,
       expectedDurationMinutes: expectedDurationMinutes,
       status: status ?? this.status,
+      schemaVersion: schemaVersion,
       endedAt: endedAt ?? this.endedAt,
-      parentId: parentId,
+      parentId: clearParentId ? null : (parentId ?? this.parentId),
       transitionCategory: transitionCategory,
       abandonmentReason: abandonmentReason ?? this.abandonmentReason,
+      halfAlertShown: halfAlertShown ?? this.halfAlertShown,
+      plannedAlertShown: plannedAlertShown ?? this.plannedAlertShown,
+    );
+  }
+
+  LogEntry complete(DateTime completedAt) {
+    return copyWith(status: LogStatus.completed, endedAt: completedAt);
+  }
+
+  LogEntry pause(DateTime pausedAt) {
+    return copyWith(status: LogStatus.paused, endedAt: pausedAt);
+  }
+
+  LogEntry abandon(DateTime abandonedAt, String reason) {
+    return copyWith(
+      status: LogStatus.abandoned,
+      endedAt: abandonedAt,
+      abandonmentReason: reason,
     );
   }
 
@@ -88,10 +103,13 @@ class LogEntry {
       'startedAt': startedAt.toIso8601String(),
       'expectedDurationMinutes': expectedDurationMinutes,
       'status': status.name,
+      'schemaVersion': schemaVersion,
       'endedAt': endedAt?.toIso8601String(),
       'parentId': parentId,
       'transitionCategory': transitionCategory?.name,
       'abandonmentReason': abandonmentReason,
+      'halfAlertShown': halfAlertShown,
+      'plannedAlertShown': plannedAlertShown,
     };
   }
 
@@ -132,10 +150,19 @@ class LogEntry {
       startedAt: startedAt,
       expectedDurationMinutes: expectedDurationMinutes,
       status: status,
+      schemaVersion: (map['schemaVersion'] is int)
+          ? map['schemaVersion'] as int
+          : 1,
       endedAt: endedAt,
       parentId: _asString(map['parentId']),
       transitionCategory: transitionCategory,
       abandonmentReason: _asString(map['abandonmentReason']),
+      halfAlertShown: map['halfAlertShown'] is bool
+          ? map['halfAlertShown'] as bool
+          : false,
+      plannedAlertShown: map['plannedAlertShown'] is bool
+          ? map['plannedAlertShown'] as bool
+          : false,
     );
   }
 
