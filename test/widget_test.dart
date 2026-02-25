@@ -1,9 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support_test_helpers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:habit_aligner/app.dart';
 
 void main() {
+  setUpAll(() => logSuiteStart('widget_test'));
+  tearDownAll(() => logSuiteEnd('widget_test'));
+  setUp(logTestStart);
+  tearDown(logTestEnd);
+
   testWidgets('renders behavioral operating system shell', (
     WidgetTester tester,
   ) async {

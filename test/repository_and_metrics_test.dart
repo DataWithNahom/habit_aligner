@@ -9,31 +9,60 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'support_test_helpers.dart';
 
 void main() {
+  setUpAll(() => logSuiteStart('repository_and_metrics_test'));
+  tearDownAll(() => logSuiteEnd('repository_and_metrics_test'));
+  setUp(logTestStart);
+  tearDown(logTestEnd);
+
   group('persistence reliability', () {
     test('save occurs after each mutation and survives reload', () async {
       final repo = InMemoryLogRepository();
       final controller = LogController(repository: repo);
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+      );
 
-      await controller.startLog(
-        label: 'persist',
-        kind: BehaviorKind.intentionalAction,
-        expectedDurationMinutes: 10,
+      await runLoggedControllerAction(
+        action: 'startLog:persist',
+        operation: () => controller.startLog(
+          label: 'persist',
+          kind: BehaviorKind.intentionalAction,
+          expectedDurationMinutes: 10,
+        ),
+        controller: controller,
       );
-      await controller.pauseActiveLog();
-      await controller.startLog(
-        label: 'persist2',
-        kind: BehaviorKind.intentionalBreak,
-        expectedDurationMinutes: 10,
+      await runLoggedControllerAction(
+        action: 'pauseActiveLog:persist',
+        operation: controller.pauseActiveLog,
+        controller: controller,
       );
-      await controller.completeActiveLog();
+      await runLoggedControllerAction(
+        action: 'startLog:persist2',
+        operation: () => controller.startLog(
+          label: 'persist2',
+          kind: BehaviorKind.intentionalBreak,
+          expectedDurationMinutes: 10,
+        ),
+        controller: controller,
+      );
+      await runLoggedControllerAction(
+        action: 'completeActiveLog:persist2',
+        operation: controller.completeActiveLog,
+        controller: controller,
+      );
 
       expect(repo.saveCalls, 4);
 
       final reloadedController = LogController(
         repository: InMemoryLogRepository(repo.snapshot),
       );
-      await reloadedController.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize:reloaded',
+        operation: reloadedController.initialize,
+        controller: reloadedController,
+      );
       expect(reloadedController.logs, hasLength(2));
       expect(
         reloadedController.logs.any(
@@ -127,7 +156,11 @@ void main() {
       final controller = LogController(
         repository: InMemoryLogRepository(items),
       );
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+      );
 
       final metrics = controller.todayMetrics;
 
@@ -165,7 +198,11 @@ void main() {
           ]),
         );
 
-        await controller.initialize();
+        await runLoggedControllerAction(
+          action: 'initialize',
+          operation: controller.initialize,
+          controller: controller,
+        );
         final ids = controller.todayTimeline.map((item) => item.id).toList();
 
         expect(ids, ['1', '2', '3']);
@@ -200,7 +237,11 @@ void main() {
         ]),
       );
 
-      await controller.initialize();
+      await runLoggedControllerAction(
+        action: 'initialize',
+        operation: controller.initialize,
+        controller: controller,
+      );
 
       expect(controller.todayTimeline.map((item) => item.id), ['today']);
     });
