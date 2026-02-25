@@ -1,9 +1,12 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-import '../data/log_repository.dart';
+import '../data/isar_log_repository.dart';
 import '../domain/log_entry.dart';
+import '../domain/services/notification_scheduler.dart';
+import 'controllers/active_session_controller.dart';
+import 'controllers/alert_controller.dart';
+import 'controllers/metrics_controller.dart';
+import 'controllers/timeline_controller.dart';
 
 class DailyMetrics {
   const DailyMetrics({
@@ -12,6 +15,8 @@ class DailyMetrics {
     required this.driftDuration,
     required this.reactionRatio,
     required this.interruptionDensity,
+    required this.focusScore,
+    required this.streak,
   });
 
   final double plannedVsActualAccuracy;
@@ -19,115 +24,69 @@ class DailyMetrics {
   final Duration driftDuration;
   final double reactionRatio;
   final double interruptionDensity;
+  final int focusScore;
+  final int streak;
 }
 
 class LogController extends ChangeNotifier {
-  LogController({required LogRepository repository}) : _repository = repository;
+  LogController({
+    required IsarLogRepository repository,
+    DateTime Function()? now,
+  }) : _repository = repository,
+       _active = ActiveSessionController(
+         repository: repository,
+         now: now ?? DateTime.now,
+         notifications: FlutterNotificationScheduler(),
+       ),
+       _metrics = MetricsController(repository: repository),
+       _timeline = TimelineController(repository: repository),
+       _now = now ?? DateTime.now {
+    _alerts = AlertController(activeSession: _active);
+    _active.addListener(_relay);
+    _metrics.addListener(_relay);
+    _timeline.addListener(_relay);
+    _alerts.addListener(_relay);
+  }
 
-  final LogRepository _repository;
-
-  final List<LogEntry> _logs = <LogEntry>[];
-  Timer? _ticker;
-  Duration _activeElapsed = Duration.zero;
-  bool _halfTimeAlertDue = false;
-  bool _plannedDurationAlertDue = false;
+  final IsarLogRepository _repository;
+  final ActiveSessionController _active;
+  final MetricsController _metrics;
+  final TimelineController _timeline;
+  late final AlertController _alerts;
+  final DateTime Function() _now;
 
   bool _isLoading = true;
-
   bool get isLoading => _isLoading;
+
+  List<LogEntry> _logs = <LogEntry>[];
   List<LogEntry> get logs => List.unmodifiable(_logs);
-
-  LogEntry? get activeLog {
-    for (final log in _logs) {
-      if (log.isActive) return log;
-    }
-    return null;
-  }
-
-  Duration get activeElapsed => _activeElapsed;
-  bool get halfTimeAlertDue => _halfTimeAlertDue;
-  bool get plannedDurationAlertDue => _plannedDurationAlertDue;
-
-  List<LogEntry> get todayTimeline {
-    final now = DateTime.now();
-    return _logs.where((log) {
-      return log.startedAt.year == now.year &&
-          log.startedAt.month == now.month &&
-          log.startedAt.day == now.day;
-    }).toList()..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-  }
+  LogEntry? get activeLog => _active.active;
+  Duration get activeElapsed => _active.elapsed;
+  bool get halfTimeAlertDue => _alerts.halfDue;
+  bool get plannedDurationAlertDue => _alerts.plannedDue;
+  List<LogEntry> get todayTimeline => _timeline.todayTimeline;
+  List<String> get driftInsights =>
+      _timeline.insights.map((e) => e.message).toList();
 
   DailyMetrics get todayMetrics {
-    final items = todayTimeline.where((item) => item.endedAt != null).toList();
-    if (items.isEmpty) {
-      return const DailyMetrics(
-        plannedVsActualAccuracy: 0,
-        deviationFrequency: 0,
-        driftDuration: Duration.zero,
-        reactionRatio: 0,
-        interruptionDensity: 0,
-      );
-    }
-
-    var totalExpected = 0;
-    var totalActual = 0;
-    var deviations = 0;
-    var reactive = 0;
-    var intentional = 0;
-    var interruptions = 0;
-    var driftSeconds = 0;
-
-    for (final item in items) {
-      final actual = item.actualDuration.inSeconds;
-      final expected = item.expectedDuration.inSeconds;
-      totalActual += actual;
-      totalExpected += expected;
-
-      final difference = (actual - expected).abs();
-      if (difference > 300) {
-        deviations += 1;
-      }
-
-      if (item.kind == BehaviorKind.drift ||
-          item.kind == BehaviorKind.correctiveStop) {
-        reactive += 1;
-      } else {
-        intentional += 1;
-      }
-
-      if (item.status == LogStatus.paused ||
-          item.status == LogStatus.abandoned) {
-        interruptions += 1;
-      }
-
-      if (item.kind == BehaviorKind.drift) {
-        driftSeconds += actual;
-      }
-    }
-
-    final accuracy = totalActual == 0
-        ? 0.0
-        : 1 - ((totalActual - totalExpected).abs() / totalActual);
-
+    final s = _metrics.snapshot;
     return DailyMetrics(
-      plannedVsActualAccuracy: accuracy.clamp(0.0, 1.0),
-      deviationFrequency: deviations / items.length,
-      driftDuration: Duration(seconds: driftSeconds),
-      reactionRatio: items.isEmpty ? 0 : reactive / (reactive + intentional),
-      interruptionDensity: interruptions / items.length,
+      plannedVsActualAccuracy: s.focusScore / 100,
+      deviationFrequency: 1 - (s.focusScore / 100),
+      driftDuration: s.driftDuration,
+      reactionRatio: s.reactionRatio,
+      interruptionDensity: s.interruptionDensity,
+      focusScore: s.focusScore,
+      streak: s.streak,
     );
   }
 
   Future<void> initialize() async {
     _isLoading = true;
     notifyListeners();
-
-    final loaded = await _repository.loadLogs();
-    _logs
-      ..clear()
-      ..addAll(loaded);
+    await _repository.initialize();
+    await _refreshAll(forceMetrics: true);
     _isLoading = false;
-    _syncTicker();
     notifyListeners();
   }
 
@@ -138,111 +97,85 @@ class LogController extends ChangeNotifier {
     TransitionCategory? transitionCategory,
     String? parentId,
   }) async {
-    if (activeLog != null) return;
-
-    final created = LogEntry(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      label: label.trim(),
+    await _active.start(
+      label: label,
       kind: kind,
-      startedAt: DateTime.now(),
       expectedDurationMinutes: expectedDurationMinutes,
-      status: LogStatus.active,
       transitionCategory: transitionCategory,
       parentId: parentId,
     );
-
-    _logs.insert(0, created);
-    _syncTicker();
-    notifyListeners();
-    await _repository.saveLogs(_logs);
+    await _refreshAll(forceMetrics: true);
   }
 
   Future<void> completeActiveLog() async {
-    final unresolved = activeLog;
-    if (unresolved == null) return;
-
-    final index = _logs.indexWhere((log) => log.id == unresolved.id);
-    if (index == -1) return;
-
-    _logs[index] = unresolved.complete(DateTime.now());
-    _syncTicker();
-    notifyListeners();
-    await _repository.saveLogs(_logs);
+    await _active.resolve(LogStatus.completed);
+    await _refreshAll(forceMetrics: true);
   }
 
   Future<void> pauseActiveLog() async {
-    final unresolved = activeLog;
-    if (unresolved == null) return;
-
-    final index = _logs.indexWhere((log) => log.id == unresolved.id);
-    if (index == -1) return;
-
-    _logs[index] = unresolved.pause(DateTime.now());
-    _syncTicker();
-    notifyListeners();
-    await _repository.saveLogs(_logs);
+    await _active.resolve(LogStatus.paused);
+    await _refreshAll(forceMetrics: true);
   }
 
   Future<void> abandonActiveLog(String reason) async {
-    final unresolved = activeLog;
-    if (unresolved == null) return;
-
-    final index = _logs.indexWhere((log) => log.id == unresolved.id);
-    if (index == -1) return;
-
-    _logs[index] = unresolved.abandon(DateTime.now(), reason.trim());
-    _syncTicker();
-    notifyListeners();
-    await _repository.saveLogs(_logs);
+    await _active.resolve(LogStatus.abandoned, reason: reason);
+    await _refreshAll(forceMetrics: true);
   }
 
-  void dismissHalfTimeAlert() {
-    _halfTimeAlertDue = false;
-    notifyListeners();
+  Future<void> dismissHalfTimeAlert() async {
+    await _alerts.dismissHalf();
+    await _refreshAll();
   }
 
-  void dismissPlannedDurationAlert() {
-    _plannedDurationAlertDue = false;
-    notifyListeners();
+  Future<void> dismissPlannedDurationAlert() async {
+    await _alerts.dismissPlanned();
+    await _refreshAll();
   }
 
-  void _syncTicker() {
-    _ticker?.cancel();
-    final current = activeLog;
-
-    if (current == null) {
-      _activeElapsed = Duration.zero;
-      _halfTimeAlertDue = false;
-      _plannedDurationAlertDue = false;
-      return;
-    }
-
-    _activeElapsed = DateTime.now().difference(current.startedAt);
-    _evaluateAlerts(current);
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      _activeElapsed = DateTime.now().difference(current.startedAt);
-      _evaluateAlerts(current);
-      notifyListeners();
-    });
-  }
-
-  void _evaluateAlerts(LogEntry current) {
-    final half = Duration(
-      minutes: (current.expectedDurationMinutes / 2).ceil(),
+  Future<void> exportJson() async {
+    final payload = await _repository.exportJson();
+    await _repository.saveExportToFile(
+      fileName: 'behavior_os_export_${_now().millisecondsSinceEpoch}.json',
+      content: payload,
     );
-    if (!_halfTimeAlertDue && _activeElapsed >= half) {
-      _halfTimeAlertDue = true;
-    }
-
-    if (!_plannedDurationAlertDue &&
-        _activeElapsed >= current.expectedDuration) {
-      _plannedDurationAlertDue = true;
-    }
   }
+
+  Future<void> exportCsv() async {
+    final payload = await _repository.exportCsv();
+    await _repository.saveExportToFile(
+      fileName: 'behavior_os_export_${_now().millisecondsSinceEpoch}.csv',
+      content: payload,
+    );
+  }
+
+  Future<void> importJson(String payload) async {
+    await _repository.importJson(payload);
+    await _refreshAll(forceMetrics: true);
+  }
+
+  Future<void> _refreshAll({bool forceMetrics = false}) async {
+    _logs = await _repository.loadLogs();
+    await _active.refresh();
+    if (forceMetrics) {
+      _metrics.invalidate();
+    }
+    await _metrics.refresh(force: forceMetrics);
+    await _timeline.refresh();
+    notifyListeners();
+  }
+
+  void _relay() => notifyListeners();
 
   @override
   void dispose() {
-    _ticker?.cancel();
+    _active.removeListener(_relay);
+    _metrics.removeListener(_relay);
+    _timeline.removeListener(_relay);
+    _alerts.removeListener(_relay);
+    _alerts.dispose();
+    _active.dispose();
+    _metrics.dispose();
+    _timeline.dispose();
     super.dispose();
   }
 }

@@ -166,6 +166,34 @@ class _MainScreenState extends State<MainScreen> {
                             return _TimelineTile(log: log);
                           },
                         ),
+
+                      const SizedBox(height: 16),
+                      const _SectionHeader(
+                        title: 'Drift pattern insights',
+                        subtitle:
+                            'Behavioral interruption patterns and fatigue signatures.',
+                      ),
+                      const SizedBox(height: 8),
+                      ...controller.driftInsights.map(
+                        (i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text('• $i'),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () => controller.exportJson(),
+                            child: const Text('Export JSON'),
+                          ),
+                          OutlinedButton(
+                            onPressed: () => controller.exportCsv(),
+                            child: const Text('Export CSV'),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -535,6 +563,14 @@ class _MetricsPanel extends StatelessWidget {
               label: 'Interruption density',
               value:
                   '${(metrics.interruptionDensity * 100).toStringAsFixed(1)}%',
+            ),
+            _MetricRow(
+              label: 'Daily focus score',
+              value: '${metrics.focusScore}/100',
+            ),
+            _MetricRow(
+              label: 'Current streak',
+              value: '${metrics.streak} day(s)',
             ),
           ],
         ),
